@@ -110,4 +110,4 @@ for item in dune_urls:
     # Nghỉ 2 giây giữa mỗi lần tải để tránh bị server khóa IP
     time.sleep(2) 
 
-print("🎉 Hoàn tất quá trình thu thập dữ liệu!")
+print("🎉Done collecting data!")
