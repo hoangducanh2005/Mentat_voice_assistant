@@ -1,8 +1,10 @@
 Glados:
   completion_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-  model: "gemini-2.0-flash"
+  model: "gemini-2.5-flash"
   api_key: "AQ.Ab8RN6JZfWU3Gec_xMqaSWX7Xl_lfC0igevhRp5Ijs9BRknf5A"
   api_type: "gemini"
+  rag_enabled: true
+  rag_top_k: 3
   interruptible: false
   asr_model: "parakeet"
   wake_word: null

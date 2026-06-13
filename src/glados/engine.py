@@ -62,6 +62,8 @@ class GladosConfig(BaseModel):
     personality_preprompt: list[PersonalityPrompt]
     api_type: str = "openai"  # "openai" or "gemini"
     asr_model: str = "parakeet"  # "parakeet" or "zipformer"
+    rag_enabled: bool = True
+    rag_top_k: int = 3
 
     @classmethod
     def from_yaml(cls, path: str | Path, key_to_config: tuple[str, ...] = ("Glados",)) -> "GladosConfig":
@@ -140,6 +142,8 @@ class Glados:
         personality_preprompt: tuple[dict[str, str], ...] = DEFAULT_PERSONALITY_PREPROMPT,
         announcement: str | None = None,
         api_type: str = "openai",
+        rag_enabled: bool = True,
+        rag_top_k: int = 3,
     ) -> None:
         """
         Initialize the Glados voice assistant with configuration parameters.
@@ -195,6 +199,18 @@ class Glados:
                 "Content-Type": "application/json",
             }
             self.completion_url = str(completion_url)
+
+        # RAG configuration
+        self.rag_enabled = rag_enabled
+        self.rag_top_k = rag_top_k
+        self.rag_store = None
+        if self.rag_enabled:
+            try:
+                from .utils.rag_store import RagStore
+                self.rag_store = RagStore()
+            except Exception as e:
+                logger.error(f"Failed to initialize RagStore: {e}")
+                self.rag_enabled = False
 
         # Initialize sample queues and state flags
         self._samples: list[NDArray[np.float32]] = []
@@ -318,6 +334,8 @@ class Glados:
             announcement=config.announcement,
             personality_preprompt=tuple(config.to_chat_messages()),
             api_type=config.api_type,
+            rag_enabled=config.rag_enabled,
+            rag_top_k=config.rag_top_k,
         )
 
     @classmethod
@@ -765,8 +783,28 @@ class Glados:
                 detected_text = self.llm_queue.get(timeout=0.1)
                 self.messages.append({"role": "user", "content": detected_text})
 
-                data = self._create_request_data(self.messages)
-                logger.debug(f"starting request on {self.messages=}")
+                # Perform RAG query context injection if enabled
+                messages_for_llm = self.messages
+                if self.rag_enabled and self.rag_store:
+                    logger.debug(f"Querying RagStore for context on query: '{detected_text}'")
+                    try:
+                        retrieved = self.rag_store.search(detected_text, top_k=self.rag_top_k)
+                        if retrieved:
+                            context_str = "\n".join([f"- From {c['source']}: {c['text']}" for c in retrieved])
+                            logger.success(f"Retrieved {len(retrieved)} context chunks from RagStore.")
+                            
+                            # Create a copy so we do not mutate the history list itself
+                            messages_for_llm = copy.deepcopy(self.messages)
+                            if messages_for_llm and messages_for_llm[-1]["role"] == "user":
+                                messages_for_llm[-1]["content"] = (
+                                    f"Context from Mentat Archives:\n{context_str}\n\n"
+                                    f"Query: {detected_text}"
+                                )
+                    except Exception as e:
+                        logger.error(f"Error executing RAG search: {e}")
+
+                data = self._create_request_data(messages_for_llm)
+                logger.debug(f"starting request on {messages_for_llm=}")
                 logger.debug("Performing request to LLM server...")
 
                 # Perform the request and process the stream
