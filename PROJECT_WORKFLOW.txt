@@ -1,0 +1,171 @@
+================================================================================
+DUNE MENTAT VOICE ASSISTANT - PROJECT WORKFLOW & BUILD GUIDE (WITH LIGHTWEIGHT RAG)
+================================================================================
+
+This document describes the runtime workflow and step-by-step instructions for
+constructing this offline-capable, low-latency, English-only Mentat Voice
+Assistant. It includes a lightweight, Raspberry Pi-optimized RAG pipeline.
+
+--------------------------------------------------------------------------------
+1. PROJECT WORKFLOW (RUNTIME ARCHITECTURE WITH LIGHTWEIGHT RAG)
+--------------------------------------------------------------------------------
+
+The project operates as a continuous listen-compute-speak loop. To make the 
+system suitable for a Raspberry Pi, we use cloud-based/lightweight embeddings 
+and a dependency-free NumPy vector search, completely avoiding heavy databases
+like ChromaDB or FAISS.
+
+[User Speaks]
+      │
+      ▼
+┌──────────────┐
+│ Microphone   │ (Audio captured via sounddevice, 16kHz mono, float32)
+└──────┬───────┘
+      │
+      ▼
+┌──────────────┐
+│ Silero VAD   │ (Voice Activity Detection determines if speech is occurring.
+└──────┬───────┘  Filters out ambient noise and detects start/end of speech)
+      │
+      ▼
+┌──────────────┐
+│ Nemo-Parakeet│ (ASR: Transcribes raw audio waveform to English text query
+│ ASR Engine   │  using an optimized Token-and-Duration Transducer model in ONNX)
+└──────┬───────┘
+      │ (English Transcription Query: "What is Dune?")
+      ▼
+┌──────────────┐
+│ RAG Query    │ (Transcribed query text is sent to Gemini Embedding API to
+│ Embedding    │  generate a query vector. Keeps local CPU/RAM usage minimal)
+└──────┬───────┘
+      │ (Query Vector)
+      ▼
+┌──────────────┐
+│ NumPy Vector │ (Calculates Cosine Similarity against pre-computed wiki page
+│ Search       │  vectors stored in a simple data/vectors.npz NumPy file.
+└──────┬───────┘  Extremely fast [<1 ms] and consumes minimal RAM on Raspberry Pi)
+      │ (Top Knowledge Chunks)
+      ▼
+┌──────────────┐
+│ LLM Engine   │ (Generates Mentat response by blending the user query with
+│ (API Client) │  retrieved knowledge chunks, guided by Dune Mentat preprompts)
+└──────┬───────┘
+      │ (Text Response)
+      ▼
+┌──────────────┐
+│ Text Normal- │ (SpokenTextConverter normalizes numbers, percentages, symbols
+│ izer / TTS   │  like $, %, 3:00pm, 2024 into full spoken words)
+└──────┬───────┘
+      │
+      ▼
+┌──────────────┐
+│ Kokoro TTS   │ (Synthesizes normalized text into natural English speech waveform
+│ Engine       │  using Kokoro-v1.0.onnx and phonetic tokens from phomenizer_en)
+└──────┬───────┘
+      │
+      ▼
+┌──────────────┐
+│ Audio Output │ (Plays back synthesized audio via speakers/headphones;
+│ (Speakers)   │  simultaneously printed on the Textual UI logger)
+└──────────────┘
+
+--------------------------------------------------------------------------------
+2. STEP-BY-STEP GUIDE TO BUILD THIS PROJECT FROM SCRATCH
+--------------------------------------------------------------------------------
+
+Follow these phases to reconstruct or understand how this project is built:
+
+PHASE 1: ENVIRONMENT SETUP
+  1. Initialize a Python environment (Python >= 3.12 recommended). Use `uv` for
+     extremely fast package management:
+     $ uv venv --python 3.12.8
+  2. Declare dependencies in `pyproject.toml` including:
+     - `onnxruntime` (for running ASR, TTS, and VAD models locally)
+     - `sounddevice` & `soundfile` (for microphone input and speaker output)
+     - `requests` & `beautifulsoup4` (for scraping and API calls)
+     - `textual` (for building the terminal user interface)
+     - `loguru` & `pyyaml` (for logging and configuration management)
+     - `numpy` (for fast vector search operations)
+  3. Install the packages:
+     $ uv pip install -e .[cpu]
+
+PHASE 2: KNOWLEDGE BASE DATA COLLECTION
+  1. Create a crawler (`scraper.py`) that queries Wikipedia/Fandom Wiki.
+  2. To avoid Cloudflare anti-bot blocks (403 errors), use the MediaWiki Parse API
+     (`action=parse`) to fetch article pages in JSON/HTML format.
+  3. Auto-resolve redirects (e.g. "Melange" -> "Spice Melange") using the
+     `redirects=true` parameter.
+  4. Parse the text content (paragraphs, lists, headings) with BeautifulSoup, clean
+     citations (e.g., [1], [2]), and save them as plain text `.txt` files in 
+     `data/knowledge/` to serve as raw knowledge data.
+
+PHASE 3: KNOWLEDGE INGESTION (CHUNKING & EMBEDDINGS)
+  1. Write a script `ingest.py` to process the knowledge files:
+     - Load all `.txt` files from `data/knowledge/`.
+     - Chunk the texts into segments of 500 characters with 100 characters overlap.
+     - Call the Gemini Embedding API (`text-embedding-004`) to generate a vector 
+       representation for each chunk.
+  2. Save the chunks and their vectors as a lightweight NumPy compressed file
+     (`data/vectors.npz`) containing:
+     - `embeddings`: A float32 NumPy array of shape (N, D).
+     - `texts`: A list of strings corresponding to the text chunks.
+
+PHASE 4: SPEECH-TO-TEXT (ASR) IMPLEMENTATION
+  1. Implement a Voice Activity Detector (`src/glados/ASR/vad.py`):
+     - Load `silero_vad_v5.onnx` using `onnxruntime`.
+     - Chunk incoming microphone audio buffer (float32, 16kHz) and feed it into 
+       the VAD session to flag active speech.
+  2. Implement the Mel Spectrogram calculator (`src/glados/ASR/mel_spectrogram.py`):
+     - Calculate STFT, power spectrum, and apply Mel filterbanks on the audio chunk.
+  3. Implement the Audio Transcriber (`src/glados/ASR/asr.py`):
+     - Load the `nemo-parakeet_tdt_ctc_110m.onnx` model and its corresponding
+       vocab mapping file (`nemo-parakeet_tdt_ctc_110m_tokens.txt`).
+     - Pass the normalized audio Mel Spectrogram to the model.
+     - Decode the output logits back to characters using greedy CTC decoding,
+       accounting for subword tokens (marked by "▁" prefix).
+
+PHASE 5: KNOWLEDGE RETRIEVAL (NUMPY VECTOR STORE)
+  1. Implement a lightweight RAG lookup manager (`src/glados/utils/rag_store.py`):
+     - Load `data/vectors.npz` into memory on startup.
+     - During runtime, when the user speaks, obtain the query vector via the
+       Gemini Embedding API.
+     - Calculate the dot product (cosine similarity) between the query vector
+       and the stored chunk vectors using NumPy:
+       `similarities = np.dot(embeddings, query_vector) / (np.linalg.norm(embeddings, axis=1) * np.linalg.norm(query_vector))`
+     - Sort similarities and retrieve the top 2-3 text chunks with the highest scores.
+
+PHASE 6: TEXT GENERATION (LLM CLIENT)
+  1. Implement a unified prompt manager and completions client in `engine.py`.
+  2. Load configuration from `glados_config.yaml`, which specifies:
+     - System prompt / personality (Dune Mentat behavior, length limit).
+     - API endpoint, model (like Claude-Haiku or Gemini-Pro), and API Key.
+  3. Inject the retrieved text chunks from the RAG step directly into the system 
+     prompt context.
+  4. Keep track of short-term chat history so that responses remain contextual.
+
+PHASE 7: TEXT-TO-SPEECH (TTS) IMPLEMENTATION
+  1. Implement a spoken text normalizer (`src/glados/utils/spoken_text_converter.py`):
+     - Use regular expressions and lookup maps to translate symbols, percentages,
+       times, currencies, decimals, and math notations into spoken words (e.g., 
+       "50%" -> "fifty percent", "$5.25" -> "five dollars and twenty-five cents").
+  2. Implement the Kokoro TTS engine (`src/glados/TTS/tts_kokoro.py`):
+     - Load `kokoro-v1.0.fp16.onnx` and the English phoneme dictionary (`phomenizer_en.onnx`).
+     - Load the voices binary file (`kokoro-voices-v1.0.bin`).
+     - Translate text to phonemes, look up the voice vector (e.g., "af_alloy"),
+       and run ONNX inference to synthesize output speech waveform.
+
+PHASE 8: CORE RUNTIME LOOP & UI
+  1. Build the orchestrator (`src/glados/engine.py`) that coordinates:
+     - Audio capture thread feeding buffers to the ASR/VAD.
+     - Passing ASR text to RAG lookup to fetch context.
+     - Sending query and context to the LLM.
+     - Normalizing and piping LLM text to TTS.
+     - Playing the generated audio chunks sequentially.
+  2. Create a Textual-based terminal UI (`src/glados/tui.py`):
+     - Show system status and interactive logs in a beautiful, retro sci-fi theme.
+     - Bind shortcut keys (e.g., Spacebar for manual listening trigger, 'Q' for quit).
+  3. Create standard scripts:
+     - `install.py` to automate package installs and check CUDA availability.
+     - `cli.py` (entry point `glados`) to manage command-line arguments like
+       `glados download`, `glados say "text"`, and `glados tui`.
+================================================================================
