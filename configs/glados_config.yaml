@@ -5,6 +5,7 @@ Glados:
   api_type: "gemini"
   rag_enabled: true
   rag_top_k: 3
+  manual_trigger_required: false
   interruptible: false
   asr_model: "parakeet"
   wake_word: null

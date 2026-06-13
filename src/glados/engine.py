@@ -64,6 +64,7 @@ class GladosConfig(BaseModel):
     asr_model: str = "parakeet"  # "parakeet" or "zipformer"
     rag_enabled: bool = True
     rag_top_k: int = 3
+    manual_trigger_required: bool = False
 
     @classmethod
     def from_yaml(cls, path: str | Path, key_to_config: tuple[str, ...] = ("Glados",)) -> "GladosConfig":
@@ -144,6 +145,7 @@ class Glados:
         api_type: str = "openai",
         rag_enabled: bool = True,
         rag_top_k: int = 3,
+        manual_trigger_required: bool = False,
     ) -> None:
         """
         Initialize the Glados voice assistant with configuration parameters.
@@ -181,17 +183,20 @@ class Glados:
 
         # Set up headers based on API type
         if api_type == "gemini":
-            # For Gemini API, we'll add the API key to the URL
             self.prompt_headers = {
                 "Content-Type": "application/json",
             }
-            # Append API key to URL if provided
-            if api_key:
-                url_str = str(completion_url)
-                separator = "&" if "?" in url_str else "?"
-                self.completion_url = f"{url_str}{separator}key={api_key}"
+            # Automatically format standard Gemini URL to use the configured model
+            if "generativelanguage.googleapis.com" in str(completion_url):
+                constructed_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             else:
-                self.completion_url = str(completion_url)
+                constructed_url = str(completion_url)
+
+            if api_key:
+                separator = "&" if "?" in constructed_url else "?"
+                self.completion_url = f"{constructed_url}{separator}key={api_key}"
+            else:
+                self.completion_url = constructed_url
         else:
             # Default OpenAI-style headers
             self.prompt_headers = {
@@ -211,6 +216,8 @@ class Glados:
             except Exception as e:
                 logger.error(f"Failed to initialize RagStore: {e}")
                 self.rag_enabled = False
+
+        self.manual_trigger_required = manual_trigger_required
 
         # Initialize sample queues and state flags
         self._samples: list[NDArray[np.float32]] = []
@@ -336,6 +343,7 @@ class Glados:
             api_type=config.api_type,
             rag_enabled=config.rag_enabled,
             rag_top_k=config.rag_top_k,
+            manual_trigger_required=config.manual_trigger_required,
         )
 
     @classmethod
@@ -440,9 +448,10 @@ class Glados:
             self._buffer.get()  # Discard the oldest sample to make room for new ones
         self._buffer.put(sample)
 
-        # Only begin recording when the user manually triggers listening.
-        # In noisy environments we don't want automatic VAD to start recording.
-        if self.manual_trigger:
+        # Begin recording if user manually triggered it, OR if manual trigger is not required and VAD detected speech
+        should_trigger = self.manual_trigger or (not self.manual_trigger_required and vad_confidence)
+
+        if should_trigger:
             if not self.interruptible and self.currently_speaking.is_set():
                 logger.info("Interruption is disabled, and the assistant is currently speaking, ignoring new input.")
                 return
@@ -451,7 +460,7 @@ class Glados:
             self.processing = False  # Turns off processing on threads for the LLM and TTS!!!
             self._samples = list(self._buffer.queue)
             self._recording_started = True
-            # Reset manual trigger after starting recording so subsequent buffer fills rely on VAD again
+            # Reset manual trigger
             self.manual_trigger = False
         else:
             # If VAD fired but manual trigger is required, ignore the VAD event
@@ -808,80 +817,94 @@ class Glados:
                 logger.debug("Performing request to LLM server...")
 
                 # Perform the request and process the stream
+                try:
+                    with requests.post(
+                        self.completion_url,
+                        headers=self.prompt_headers,
+                        json=data,
+                        stream=(self.api_type != "gemini"),  # Don't stream for Gemini
+                    ) as response:
+                        if response.status_code != 200:
+                            logger.error(f"LLM API returned status code {response.status_code}: {response.text}")
+                            self.currently_speaking.clear()
+                            self.processing = False
+                            self.tts_queue.put("<EOS>")
+                            continue
 
-                with requests.post(
-                    self.completion_url,
-                    headers=self.prompt_headers,
-                    json=data,
-                    stream=(self.api_type != "gemini"),  # Don't stream for Gemini
-                ) as response:
-                    if self.api_type == "gemini":
-                        # Handle non-streaming Gemini response
-                        try:
-                            result = response.json()
-                            if "candidates" in result and len(result["candidates"]) > 0:
-                                content = result["candidates"][0].get("content", {})
-                                parts = content.get("parts", [])
-                                if parts and len(parts) > 0:
-                                    full_text = parts[0].get("text", "")
-                                    if full_text:
-                                        # Process the complete response
-                                        self._process_complete_response(full_text)
-                        except Exception as e:
-                            logger.error(f"Error processing Gemini response: {e}")
-                    else:
-                        # Handle streaming response (OpenAI/Ollama format)
-                        sentence = []
-                        
-                        # Check if the response is actually non-streaming (full JSON response)
-                        content_type = response.headers.get('content-type', '')
-                        if 'text/event-stream' not in content_type:
-                            # Non-streaming response - parse as complete JSON
+                        if self.api_type == "gemini":
+                            # Handle non-streaming Gemini response
                             try:
                                 result = response.json()
-                                if "choices" in result and len(result["choices"]) > 0:
-                                    full_text = result["choices"][0].get("message", {}).get("content", "")
-                                    if full_text:
-                                        self._process_complete_response(full_text)
+                                if "error" in result:
+                                    logger.error(f"Gemini API returned error: {result['error']}")
+                                elif "candidates" in result and len(result["candidates"]) > 0:
+                                    content = result["candidates"][0].get("content", {})
+                                    parts = content.get("parts", [])
+                                    if parts and len(parts) > 0:
+                                        full_text = parts[0].get("text", "")
+                                        if full_text:
+                                            # Process the complete response
+                                            self._process_complete_response(full_text)
                             except Exception as e:
-                                logger.error(f"Error processing non-streaming OpenAI response: {e}")
+                                logger.error(f"Error processing Gemini response: {e}")
                         else:
-                            # Streaming response - process line by line
-                            for line in response.iter_lines():
-                                if self.processing is False:
-                                    break  # If the stop flag is set from new voice input, halt processing
-                                if line:  # Filter out empty keep-alive new lines
-                                    try:
-                                        cleaned_line = self._clean_raw_bytes(line)
-                                        if cleaned_line:  # Add check for empty cleaned line
-                                            chunk = self._process_chunk(cleaned_line)
-                                            if chunk:
-                                                sentence.append(chunk)
-                                                # If there is a pause token, send the sentence to the TTS queue
-                                                if (
-                                                    chunk
-                                                    in [
-                                                        ".",
-                                                        "!",
-                                                        "?",
-                                                        ":",
-                                                        ";",
-                                                        "?!",
-                                                        "\n",
-                                                        "\n\n",
-                                                    ]
-                                                    and sentence[-2].isdigit() is False
-                                                ):  # Don't split on numbers!
-                                                    logger.info(f"Chunk: {chunk}")
-                                                    self._process_sentence(sentence)
-                                                    sentence = []
-                                    except Exception as e:
-                                        logger.error(f"Error processing line: {e}")
-                                        continue
+                            # Handle streaming response (OpenAI/Ollama format)
+                            sentence = []
+                            
+                            # Check if the response is actually non-streaming (full JSON response)
+                            content_type = response.headers.get('content-type', '')
+                            if 'text/event-stream' not in content_type:
+                                # Non-streaming response - parse as complete JSON
+                                try:
+                                    result = response.json()
+                                    if "choices" in result and len(result["choices"]) > 0:
+                                        full_text = result["choices"][0].get("message", {}).get("content", "")
+                                        if full_text:
+                                            self._process_complete_response(full_text)
+                                except Exception as e:
+                                    logger.error(f"Error processing non-streaming OpenAI response: {e}")
+                            else:
+                                # Streaming response - process line by line
+                                for line in response.iter_lines():
+                                    if self.processing is False:
+                                        break  # If the stop flag is set from new voice input, halt processing
+                                    if line:  # Filter out empty keep-alive new lines
+                                        try:
+                                            cleaned_line = self._clean_raw_bytes(line)
+                                            if cleaned_line:  # Add check for empty cleaned line
+                                                chunk = self._process_chunk(cleaned_line)
+                                                if chunk:
+                                                    sentence.append(chunk)
+                                                    # If there is a pause token, send the sentence to the TTS queue
+                                                    if (
+                                                        chunk
+                                                        in [
+                                                            ".",
+                                                            "!",
+                                                            "?",
+                                                            ":",
+                                                            "?",
+                                                            "?!",
+                                                            "\n",
+                                                            "\n\n",
+                                                        ]
+                                                        and sentence[-2].isdigit() is False
+                                                    ):  # Don't split on numbers!
+                                                        logger.info(f"Chunk: {chunk}")
+                                                        self._process_sentence(sentence)
+                                                        sentence = []
+                                        except Exception as e:
+                                            logger.error(f"Error processing line: {e}")
+                                            continue
 
-                            if self.processing and sentence:
-                                self._process_sentence(sentence)
-                    self.tts_queue.put("<EOS>")  # Add end of stream token to the queue
+                                if self.processing and sentence:
+                                    self._process_sentence(sentence)
+                        self.tts_queue.put("<EOS>")  # Add end of stream token to the queue
+                except Exception as e:
+                    logger.error(f"Error communicating with LLM API: {e}")
+                    self.currently_speaking.clear()
+                    self.processing = False
+                    self.tts_queue.put("<EOS>")
             except queue.Empty:
                 time.sleep(self.PAUSE_TIME)
 
