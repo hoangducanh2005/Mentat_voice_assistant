@@ -82,16 +82,17 @@ def get_embeddings(texts, api_type, api_key, completion_url):
     """
     Generate embeddings for a list of texts using the configured API.
     """
+    import time
     embeddings = []
     headers = {"Content-Type": "application/json"}
     
-    # Batch processing (e.g. 10 texts per request)
-    batch_size = 10
+    # Batch processing (using 15 texts per request to stay under the 100 RPM free tier quota)
+    batch_size = 15
     total_texts = len(texts)
     
     # Set up URL and headers based on API type
     if api_type == "gemini":
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents?key={api_key}"
     else:
         # OpenAI style: Rewrite chat/completions to embeddings
         if "chat/completions" in completion_url:
@@ -106,43 +107,78 @@ def get_embeddings(texts, api_type, api_key, completion_url):
         batch_texts = texts[i:i + batch_size]
         print(f"Generating embeddings for batch {i//batch_size + 1}/{(total_texts-1)//batch_size + 1}...")
         
-        try:
-            if api_type == "gemini":
-                # Gemini embedding API calls must be sent one by one or using batchEmbedContents
-                # To keep it simple and safe, let's embed them one by one
-                for text in batch_texts:
+        # Retry logic with exponential backoff on 429
+        max_attempts = 5
+        attempt = 0
+        success = False
+        
+        while attempt < max_attempts and not success:
+            try:
+                if api_type == "gemini":
+                    requests_list = []
+                    for text in batch_texts:
+                        requests_list.append({
+                            "model": "models/gemini-embedding-001",
+                            "content": {"parts": [{"text": text}]}
+                        })
+                    payload = {"requests": requests_list}
+                    response = requests.post(url, headers=headers, json=payload, timeout=30)
+                else:
+                    # OpenAI style allows batch embedding in a single request
                     payload = {
-                        "model": "models/text-embedding-004",
-                        "content": {"parts": [{"text": text}]}
+                        "model": "text-embedding-3-small",
+                        "input": batch_texts
                     }
-                    response = requests.post(url, headers=headers, json=payload, timeout=20)
-                    response.raise_for_status()
-                    res_data = response.json()
-                    vector = res_data.get("embedding", {}).get("values", [])
-                    if vector:
-                        embeddings.append(vector)
-                    else:
-                        raise ValueError(f"Unexpected response payload: {res_data}")
-            else:
-                # OpenAI style allows batch embedding in a single request
-                payload = {
-                    "model": "text-embedding-3-small",  # Default standard model
-                    "input": batch_texts
-                }
-                response = requests.post(url, headers=headers, json=payload, timeout=20)
+                    response = requests.post(url, headers=headers, json=payload, timeout=30)
+                
+                # Check for rate limits (429)
+                if response.status_code == 429:
+                    print(f"⚠️ Exceeded rate limit (429). Attempt {attempt + 1}/{max_attempts}. Sleeping 60s...")
+                    time.sleep(60)
+                    attempt += 1
+                    continue
+                    
                 response.raise_for_status()
                 res_data = response.json()
-                data_list = res_data.get("data", [])
-                # Sort by index to maintain original order
-                data_list.sort(key=lambda x: x.get("index", 0))
-                for item in data_list:
-                    embeddings.append(item.get("embedding"))
+                
+                if api_type == "gemini":
+                    for item in res_data.get("embeddings", []):
+                        vector = item.get("values", [])
+                        if vector:
+                            embeddings.append(vector)
+                        else:
+                            raise ValueError(f"Unexpected item in response: {item}")
+                else:
+                    data_list = res_data.get("data", [])
+                    data_list.sort(key=lambda x: x.get("index", 0))
+                    for item in data_list:
+                        embeddings.append(item.get("embedding"))
+                
+                success = True
+                
+            except Exception as e:
+                # Catch rate limiting exceptions
+                is_rate_limit = False
+                if isinstance(e, requests.RequestException) and hasattr(e, 'response') and e.response is not None:
+                    if e.response.status_code == 429:
+                        is_rate_limit = True
+                        print(f"⚠️ Exceeded rate limit (429). Attempt {attempt + 1}/{max_attempts}. Sleeping 60s...")
+                        time.sleep(60)
+                        attempt += 1
+                
+                if not is_rate_limit:
+                    print(f"❌ Error generating embeddings for batch starting at {i}: {e}")
+                    if isinstance(e, requests.RequestException) and hasattr(e, 'response') and e.response is not None:
+                        print(f"Response details: {e.response.text}")
+                    return None
                     
-        except Exception as e:
-            print(f"❌ Error generating embeddings for batch starting at {i}: {e}")
-            if isinstance(e, requests.RequestException) and hasattr(e, 'response') and e.response is not None:
-                print(f"Response details: {e.response.text}")
+        if not success:
+            print(f"❌ Failed to generate embeddings for batch starting at {i} after {max_attempts} attempts.")
             return None
+            
+        # Stagger requests to stay under 100 RPM (15 requests per minute -> ~1 request per 4 seconds)
+        if i + batch_size < total_texts:
+            time.sleep(10)
             
     return embeddings
 

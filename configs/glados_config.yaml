@@ -1,8 +1,8 @@
 Glados:
-  completion_url: "https://apic1.ohmycdn.com/api/v1/ai/openai/cc-omg/v1/chat/completions"
-  model: "claude-haiku-4-5"
-  api_key: "sk-xxx"
-  api_type: "openai"
+  completion_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+  model: "gemini-2.0-flash"
+  api_key: "AQ.Ab8RN6JZfWU3Gec_xMqaSWX7Xl_lfC0igevhRp5Ijs9BRknf5A"
+  api_type: "gemini"
   interruptible: false
   asr_model: "parakeet"
   wake_word: null
