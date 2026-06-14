@@ -19,6 +19,7 @@ class AudioTranscriber:
         self,
         model_path: Path = MODEL_PATH,
         tokens_file: Path = TOKEN_PATH,
+        asr_corrections: dict = None,
     ) -> None:
         """
         Initialize an AudioTranscriber with an ONNX speech recognition model.
@@ -50,6 +51,7 @@ class AudioTranscriber:
             providers=providers,
         )
         self.vocab = self._load_vocabulary(tokens_file)
+        self.asr_corrections = asr_corrections or {}
 
         # Standard mel spectrogram parameters
         self.melspectrogram = MelSpectrogramCalculator()
@@ -197,8 +199,9 @@ class AudioTranscriber:
 
         # Decode output
         transcription = self.decode_output(outputs[0])
-
-        return transcription[0]
+        raw_transcription = transcription[0]
+        self.last_raw_transcription = raw_transcription
+        return self.correct_transcription(raw_transcription)
 
     def transcribe_file(self, audio_path: str) -> str:
         """
@@ -219,6 +222,63 @@ class AudioTranscriber:
         audio, sr = sf.read(audio_path, dtype="float32")
 
         return self.transcribe(audio)
+
+    def correct_transcription(self, text: str) -> str:
+        """
+        Applies exact and fuzzy corrections to the transcribed text to fix Dune terminology.
+        """
+        if not self.asr_corrections:
+            return text
+
+        import re
+        from Levenshtein import distance
+
+        # Lowercase text for matching
+        corrected_text = text.lower()
+
+        # 1. Apply exact mappings first (sorted by length descending to avoid substring conflicts)
+        mappings = self.asr_corrections.get("mappings", {})
+        sorted_mappings = sorted(mappings.items(), key=lambda x: len(x[0]), reverse=True)
+        for misheard, correct in sorted_mappings:
+            pattern = re.compile(r'\b' + re.escape(misheard.lower()) + r'\b')
+            corrected_text = pattern.sub(correct, corrected_text)
+
+        # 2. Apply Levenshtein fuzzy matching on individual words
+        target_words = self.asr_corrections.get("target_words", [])
+        if target_words:
+            words = corrected_text.split()
+            corrected_words = []
+            for word in words:
+                # Clean word from punctuation for comparison
+                clean_word = re.sub(r"[^\w']", "", word)
+                if not clean_word:
+                    corrected_words.append(word)
+                    continue
+
+                best_match = None
+                best_dist = 999
+
+                # Check if it matches a target word closely
+                for target in target_words:
+                    target_lower = target.lower()
+                    dist = distance(clean_word, target_lower)
+
+                    # Threshold for short words: if len <= 4, threshold is 1; else 2.
+                    threshold = 1 if len(clean_word) <= 4 else 2
+                    if dist <= threshold and dist < best_dist:
+                        best_match = target
+                        best_dist = dist
+
+                if best_match:
+                    if best_dist > 0:
+                        word = best_match
+                    else:
+                        word = word.replace(clean_word, best_match)
+                corrected_words.append(word)
+
+            corrected_text = " ".join(corrected_words)
+
+        return corrected_text.strip()
 
     def __del__(self) -> None:
         """Clean up ONNX session to prevent context leaks."""

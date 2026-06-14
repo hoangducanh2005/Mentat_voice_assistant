@@ -95,6 +95,17 @@ dune_urls = [
     {"url": "https://dune.fandom.com/wiki/Thumper", "file": "Thumper.txt"},
     {"url": "https://dune.fandom.com/wiki/Ornithopter", "file": "Ornithopter.txt"},
     {"url": "https://dune.fandom.com/wiki/Water_of_Life", "file": "Water_of_Life.txt"},
+    {"url": "https://dune.fandom.com/wiki/Chani", "file": "Chani.txt"},
+    {"url": "https://dune.fandom.com/wiki/Vladimir_Harkonnen", "file": "Vladimir_Harkonnen.txt"},
+    {"url": "https://dune.fandom.com/wiki/Jessica_Atreides", "file": "Jessica_Atreides.txt"},
+    {"url": "https://dune.fandom.com/wiki/Leto_Atreides_I", "file": "Leto_Atreides_I.txt"},
+    {"url": "https://dune.fandom.com/wiki/Gurney_Halleck", "file": "Gurney_Halleck.txt"},
+    {"url": "https://dune.fandom.com/wiki/Duncan_Idaho", "file": "Duncan_Idaho.txt"},
+    {"url": "https://dune.fandom.com/wiki/Thufir_Hawat", "file": "Thufir_Hawat.txt"},
+    {"url": "https://dune.fandom.com/wiki/Sardaukar", "file": "Sardaukar.txt"},
+    {"url": "https://dune.fandom.com/wiki/Spacing_Guild", "file": "Spacing_Guild.txt"},
+    {"url": "https://dune.fandom.com/wiki/Crysknife", "file": "Crysknife.txt"},
+    {"url": "https://dune.fandom.com/wiki/Gom_Jabbar", "file": "Gom_Jabbar.txt"},
 ]
 
 import os
@@ -106,6 +117,9 @@ os.makedirs(output_dir, exist_ok=True)
 # Chạy vòng lặp để crawl tự động
 for item in dune_urls:
     output_path = os.path.join(output_dir, item["file"])
+    if os.path.exists(output_path):
+        print(f"⏭️ File đã tồn tại, bỏ qua: {item['file']}")
+        continue
     scrape_fandom_page(item["url"], output_path)
     # Nghỉ 2 giây giữa mỗi lần tải để tránh bị server khóa IP
     time.sleep(2) 

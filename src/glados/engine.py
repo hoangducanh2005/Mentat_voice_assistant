@@ -65,6 +65,7 @@ class GladosConfig(BaseModel):
     rag_enabled: bool = True
     rag_top_k: int = 3
     manual_trigger_required: bool = False
+    asr_corrections: dict = {}
 
     @classmethod
     def from_yaml(cls, path: str | Path, key_to_config: tuple[str, ...] = ("Glados",)) -> "GladosConfig":
@@ -219,6 +220,14 @@ class Glados:
 
         self.manual_trigger_required = manual_trigger_required
 
+        # Web UI Event Callbacks
+        self.on_state_change = None
+        self.on_transcript = None
+        self.on_assistant = None
+        self.on_assistant_chunk = None
+        self.on_rag = None
+        self.on_log = None
+
         # Initialize sample queues and state flags
         self._samples: list[NDArray[np.float32]] = []
         self._sample_queue: queue.Queue[tuple[NDArray[np.float32], bool]] = queue.Queue()
@@ -299,6 +308,15 @@ class Glados:
             blocksize=int(self.SAMPLE_RATE * self.VAD_SIZE / 1000),
         )
 
+    def _update_state(self, state: str) -> None:
+        """Helper to update internal state and trigger UI callbacks."""
+        logger.debug(f"State transition: {state}")
+        if self.on_state_change:
+            try:
+                self.on_state_change(state)
+            except Exception as e:
+                logger.error(f"Error in on_state_change callback: {e}")
+
     @property
     def messages(self) -> list[dict[str, str]]:
         """
@@ -321,7 +339,7 @@ class Glados:
             Glados: A new Glados instance configured with the provided settings
         """
         # Choose ASR model based on configuration
-        asr_model = ParakeetASR()
+        asr_model = ParakeetASR(asr_corrections=config.asr_corrections)
         vad_model = VAD()
 
         # Choose TTS model based on voice configuration
@@ -395,6 +413,7 @@ class Glados:
         self.input_stream.start()
         logger.success("Audio Modules Operational")
         logger.success("Listening...")
+        self._update_state("IDLE")
         # Loop forever, but is 'paused' when new samples are not available
         try:
             while True:
@@ -460,6 +479,7 @@ class Glados:
             self.processing = False  # Turns off processing on threads for the LLM and TTS!!!
             self._samples = list(self._buffer.queue)
             self._recording_started = True
+            self._update_state("LISTENING")
             # Reset manual trigger
             self.manual_trigger = False
         else:
@@ -567,20 +587,36 @@ class Glados:
         Raises:
             No explicit exceptions raised
         """
+        self._update_state("THINKING")
         logger.debug("Detected pause after speech. Processing...")
+        audio_duration_s = sum(len(s) for s in self._samples) / self.SAMPLE_RATE
+        logger.success(f"VAD triggered. Processing audio chunk of length {audio_duration_s:.2f}s")
+        
+        start_time = time.perf_counter()
         detected_text = self.asr(self._samples)
+        asr_duration_ms = (time.perf_counter() - start_time) * 1000
+        logger.success(f"ASR execution completed in {asr_duration_ms:.3f}ms")
 
         if detected_text:
             logger.success(f"ASR text: '{detected_text}'")
+            raw_text = getattr(self._asr_model, "last_raw_transcription", detected_text)
+            if self.on_transcript:
+                try:
+                    self.on_transcript(raw_text, detected_text)
+                except Exception as e:
+                    logger.error(f"Error in on_transcript callback: {e}")
 
             if self.wake_word and not self._wakeword_detected(detected_text):
                 logger.info(f"Required wake word {self.wake_word=} not detected.")
+                self._update_state("IDLE")
             else:
                 self.llm_queue.put(detected_text)
                 self.processing = True
                 # Set speaking flag early to prevent immediate feedback
                 self.currently_speaking.set()
                 logger.debug("Speaking event set early - preparing TTS response")
+        else:
+            self._update_state("IDLE")
 
         self.reset()
 
@@ -797,10 +833,20 @@ class Glados:
                 if self.rag_enabled and self.rag_store:
                     logger.debug(f"Querying RagStore for context on query: '{detected_text}'")
                     try:
+                        start_time = time.perf_counter()
                         retrieved = self.rag_store.search(detected_text, top_k=self.rag_top_k)
+                        duration_ms = (time.perf_counter() - start_time) * 1000
+                        logger.success(f"NumPy cosine similarity search completed in {duration_ms:.3f}ms")
+                        
                         if retrieved:
                             context_str = "\n".join([f"- From {c['source']}: {c['text']}" for c in retrieved])
                             logger.success(f"Retrieved {len(retrieved)} context chunks from RagStore.")
+                            
+                            if self.on_rag:
+                                try:
+                                    self.on_rag(retrieved)
+                                except Exception as e:
+                                    logger.error(f"Error in on_rag callback: {e}")
                             
                             # Create a copy so we do not mutate the history list itself
                             messages_for_llm = copy.deepcopy(self.messages)
@@ -843,6 +889,11 @@ class Glados:
                                     if parts and len(parts) > 0:
                                         full_text = parts[0].get("text", "")
                                         if full_text:
+                                            if self.on_assistant_chunk:
+                                                try:
+                                                    self.on_assistant_chunk(full_text)
+                                                except Exception as e:
+                                                    logger.error(f"Error in on_assistant_chunk callback: {e}")
                                             # Process the complete response
                                             self._process_complete_response(full_text)
                             except Exception as e:
@@ -860,6 +911,11 @@ class Glados:
                                     if "choices" in result and len(result["choices"]) > 0:
                                         full_text = result["choices"][0].get("message", {}).get("content", "")
                                         if full_text:
+                                            if self.on_assistant_chunk:
+                                                try:
+                                                    self.on_assistant_chunk(full_text)
+                                                except Exception as e:
+                                                    logger.error(f"Error in on_assistant_chunk callback: {e}")
                                             self._process_complete_response(full_text)
                                 except Exception as e:
                                     logger.error(f"Error processing non-streaming OpenAI response: {e}")
@@ -874,6 +930,11 @@ class Glados:
                                             if cleaned_line:  # Add check for empty cleaned line
                                                 chunk = self._process_chunk(cleaned_line)
                                                 if chunk:
+                                                    if self.on_assistant_chunk:
+                                                        try:
+                                                            self.on_assistant_chunk(chunk)
+                                                        except Exception as e:
+                                                            logger.error(f"Error in on_assistant_chunk callback: {e}")
                                                     sentence.append(chunk)
                                                     # If there is a pause token, send the sentence to the TTS queue
                                                     if (
@@ -1104,6 +1165,7 @@ class Glados:
                     time.sleep(0.2)
                     
                     self.currently_speaking.clear()
+                    self._update_state("IDLE")
                     logger.debug("Speaking event cleared - ASR/VAD re-enabled")
                     continue
 
@@ -1112,6 +1174,12 @@ class Glados:
                     if not self.currently_speaking.is_set():
                         self.currently_speaking.set()
                         logger.debug("Speaking event set - ASR/VAD disabled")
+                    self._update_state("SPEAKING")
+                    if self.on_assistant:
+                        try:
+                            self.on_assistant(audio_msg.text)
+                        except Exception as e:
+                            logger.error(f"Error in on_assistant callback: {e}")
                     
                     sd.play(audio_msg.audio, self._tts.sample_rate)
                     total_samples = len(audio_msg.audio)
@@ -1132,6 +1200,7 @@ class Glados:
                         assistant_text = []
 
                         self.currently_speaking.clear()
+                        self._update_state("IDLE")
                         logger.debug("Speaking event cleared after interruption - ASR/VAD re-enabled")
 
                         # Clear remaining audio queue

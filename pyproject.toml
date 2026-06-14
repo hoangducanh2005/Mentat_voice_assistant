@@ -18,6 +18,9 @@ dependencies = [
     "phonemizer>=3.3.0",
     "piper-tts",
     "beautifulsoup4>=4.15.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.28.0",
+    "websockets>=12.0",
 ]
 
 [project.optional-dependencies]

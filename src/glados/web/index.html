@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mentat Cockpit - Voice Assistant Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+</head>
+<body class="industrial-dark">
+    <div class="cockpit-container">
+        
+        <!-- HEADER ZONE -->
+        <header class="cockpit-header">
+            <div class="header-logo">
+                <div class="logo-orb"></div>
+                <h1>MENTAT<span>COCKPIT_V2</span></h1>
+            </div>
+            <div class="system-time" id="system-time">00:00:00.000</div>
+        </header>
+
+        <main class="cockpit-grid">
+            
+            <!-- LEFT PANEL: CONTROLS & TELEMETRY -->
+            <section class="panel panel-left" aria-label="Controls and System Telemetry">
+                <div class="panel-header">
+                    <h2>SYSTEM_STATUS</h2>
+                </div>
+                <div class="panel-body">
+                    <!-- Status Badge -->
+                    <div class="status-display">
+                        <div class="status-indicator" id="status-indicator"></div>
+                        <div class="status-label">
+                            <span class="label-title">STATE</span>
+                            <span class="label-value" id="status-text">INITIALIZING</span>
+                        </div>
+                    </div>
+
+                    <!-- Telemetry Meters -->
+                    <div class="telemetry-meters">
+                        <div class="meter-group">
+                            <div class="meter-header">
+                                <span>ASR LATENCY</span>
+                                <span id="telemetry-asr-val">-- ms</span>
+                            </div>
+                            <div class="meter-bar-bg">
+                                <div class="meter-bar" id="telemetry-asr-bar" style="width: 0%;"></div>
+                            </div>
+                        </div>
+                        <div class="meter-group">
+                            <div class="meter-header">
+                                <span>RAG SEARCH</span>
+                                <span id="telemetry-rag-val">-- ms</span>
+                            </div>
+                            <div class="meter-bar-bg">
+                                <div class="meter-bar" id="telemetry-rag-bar" style="width: 0%;"></div>
+                            </div>
+                        </div>
+                        <div class="meter-group">
+                            <div class="meter-header">
+                                <span>AUDIO CHUNK</span>
+                                <span id="telemetry-audio-val">-- s</span>
+                            </div>
+                            <div class="meter-bar-bg">
+                                <div class="meter-bar" id="telemetry-audio-bar" style="width: 0%;"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Controls Group -->
+                    <div class="control-actions">
+                        <h3>OPERATOR_OVERRIDE</h3>
+                        <button class="btn btn-primary" id="btn-trigger" title="Force ASR loop listening">
+                            <span class="btn-icon">⚡</span> RECORD / LISTEN
+                        </button>
+                        <button class="btn btn-secondary" id="btn-reset" title="Reset all audio buffers and queues">
+                            <span class="btn-icon">🔄</span> SYSTEM RESET
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- CENTER PANEL: OSCILLOSCOPE & TRANSCRIPTS -->
+            <section class="panel panel-center" aria-label="Audio Waveform and Conversational Stream">
+                <div class="panel-header">
+                    <h2>COGNITIVE_INTERFACE</h2>
+                </div>
+                <div class="panel-body central-body">
+                    <!-- Oscilloscope Viewport -->
+                    <div class="oscilloscope-container">
+                        <canvas id="oscilloscope" width="600" height="150"></canvas>
+                        <div class="glow-layer"></div>
+                    </div>
+
+                    <!-- Transcriptions Section -->
+                    <div class="conversational-zone">
+                        <div class="speech-box">
+                            <div class="speech-header">
+                                <span class="badge badge-amber">ASR_INPUT</span>
+                            </div>
+                            <div class="transcript-sub">
+                                <div class="sub-title">USER SPEECH:</div>
+                                <div class="sub-text" id="raw-transcript">Awaiting auditory signal...</div>
+                            </div>
+                        </div>
+
+                        <!-- Typewriter assistant response -->
+                        <div class="speech-box assistant-box">
+                            <div class="speech-header">
+                                <span class="badge badge-cobalt">MENTAT_RESPONSE</span>
+                            </div>
+                            <div class="assistant-response-text" id="assistant-text">
+                                System ready. Awaiting instruction.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- RIGHT PANEL: RAG CONTEXTS & CONSOLE -->
+            <section class="panel panel-right" aria-label="RAG Context and Console Logs">
+                <div class="panel-header">
+                    <h2>ARCHIVAL_RETRIEVAL_RAG</h2>
+                </div>
+                <div class="panel-body split-right">
+                    <!-- RAG Context Cards List -->
+                    <div class="rag-container">
+                        <div class="section-title">RETRIEVED_CONTEXTS</div>
+                        <div class="rag-list" id="rag-list">
+                            <div class="no-rag-data">No active retrieval context loaded.</div>
+                        </div>
+                    </div>
+
+                    <!-- Live Terminal Output -->
+                    <div class="terminal-container">
+                        <div class="section-title">TELEMETRY_STREAM_LOGS</div>
+                        <div class="terminal-body" id="terminal-body">
+                            <div class="log-line system-line">[SYSTEM] Terminal initialized. Waiting for web socket link...</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+    <script src="index.js"></script>
+</body>
+</html>

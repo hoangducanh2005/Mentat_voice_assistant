@@ -51,15 +51,19 @@ def chunk_text(text, chunk_size=500, overlap=100):
         
     return [c for c in chunks if c]
 
-def load_documents():
-    """Scan knowledge dir and chunk all documents"""
+def load_documents(processed_sources=None):
+    """Scan knowledge dir and chunk all documents, optionally skipping already processed files."""
     if not KNOWLEDGE_DIR.exists():
         print(f"❌ Thư mục tri thức không tồn tại: {KNOWLEDGE_DIR}")
         return []
         
+    processed_sources = processed_sources or set()
     documents = []
     print(f"Scanning knowledge directory: {KNOWLEDGE_DIR}...")
     for file_path in KNOWLEDGE_DIR.glob("*.txt"):
+        if file_path.name in processed_sources:
+            print(f"⏭️ File already processed, skipping: {file_path.name}")
+            continue
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read().strip()
@@ -86,13 +90,13 @@ def get_embeddings(texts, api_type, api_key, completion_url):
     embeddings = []
     headers = {"Content-Type": "application/json"}
     
-    # Batch processing (using 15 texts per request to stay under the 100 RPM free tier quota)
-    batch_size = 15
+    # Batch processing (using 25 texts per request to stay under the 100 inputs per minute rate limit)
+    batch_size = 25
     total_texts = len(texts)
     
     # Set up URL and headers based on API type
     if api_type == "gemini":
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents?key={api_key}"
     else:
         # OpenAI style: Rewrite chat/completions to embeddings
         if "chat/completions" in completion_url:
@@ -118,7 +122,7 @@ def get_embeddings(texts, api_type, api_key, completion_url):
                     requests_list = []
                     for text in batch_texts:
                         requests_list.append({
-                            "model": "models/gemini-embedding-001",
+                            "model": "models/gemini-embedding-2",
                             "content": {"parts": [{"text": text}]}
                         })
                     payload = {"requests": requests_list}
@@ -133,7 +137,8 @@ def get_embeddings(texts, api_type, api_key, completion_url):
                 
                 # Check for rate limits (429)
                 if response.status_code == 429:
-                    print(f"⚠️ Exceeded rate limit (429). Attempt {attempt + 1}/{max_attempts}. Sleeping 60s...")
+                    print(f"⚠️ Exceeded rate limit (429). Response: {response.text}")
+                    print(f"Attempt {attempt + 1}/{max_attempts}. Sleeping 60s...")
                     time.sleep(60)
                     attempt += 1
                     continue
@@ -176,9 +181,9 @@ def get_embeddings(texts, api_type, api_key, completion_url):
             print(f"❌ Failed to generate embeddings for batch starting at {i} after {max_attempts} attempts.")
             return None
             
-        # Stagger requests to stay under 100 RPM (15 requests per minute -> ~1 request per 4 seconds)
+        # Stagger requests to stay under 100 RPM
         if i + batch_size < total_texts:
-            time.sleep(10)
+            time.sleep(16)
             
     return embeddings
 
@@ -211,15 +216,32 @@ def main():
             else:
                 print("⚠️ Không tìm thấy key trong biến môi trường. Tiếp tục sử dụng key mặc định từ cấu hình...")
         
-    # 2. Load and chunk documents
-    documents = load_documents()
-    if not documents:
-        print("❌ Không có tài liệu nào để xử lý.")
-        sys.exit(1)
-        
-    print(f"Tổng số chunks đã được tạo: {len(documents)}")
+    # 2. Try loading existing vectors
+    existing_embeddings = None
+    existing_texts = None
+    existing_sources = None
+    processed_sources = set()
     
-    # 3. Generate embeddings
+    if OUTPUT_PATH.exists():
+        try:
+            data = np.load(OUTPUT_PATH, allow_pickle=True)
+            existing_embeddings = data["embeddings"].astype(np.float32)
+            existing_texts = data["texts"]
+            existing_sources = data["sources"]
+            processed_sources = set(existing_sources)
+            print(f"ℹ️ Found existing vector database with {len(existing_texts)} chunks from {len(processed_sources)} files.")
+        except Exception as e:
+            print(f"⚠️ Failed to load existing vectors: {e}. Will re-embed all files.")
+            
+    # 3. Load and chunk documents (skipping already processed sources)
+    documents = load_documents(processed_sources)
+    if not documents:
+        print("✅ No new files to process. Vector database is up-to-date!")
+        sys.exit(0)
+        
+    print(f"New chunks generated for embedding: {len(documents)}")
+    
+    # 4. Generate embeddings for new chunks
     texts = [doc["text"] for doc in documents]
     embeddings_list = get_embeddings(texts, api_type, api_key, completion_url)
     
@@ -227,13 +249,20 @@ def main():
         print("❌ Quá trình tạo vector nhúng (embeddings) thất bại hoặc không đầy đủ.")
         sys.exit(1)
         
-    # 4. Save to numpy vectors.npz
-    embeddings_arr = np.array(embeddings_list, dtype=np.float32)
+    # 5. Save combined vectors to numpy vectors.npz
+    new_embeddings_arr = np.array(embeddings_list, dtype=np.float32)
+    new_texts_arr = np.array(texts, dtype=object)
+    new_sources_arr = np.array([doc["source"] for doc in documents], dtype=object)
     
-    # Store text and metadata alongside embeddings
-    texts_arr = np.array(texts, dtype=object)
-    sources_arr = np.array([doc["source"] for doc in documents], dtype=object)
-    
+    if existing_embeddings is not None:
+        embeddings_arr = np.concatenate([existing_embeddings, new_embeddings_arr], axis=0)
+        texts_arr = np.concatenate([existing_texts, new_texts_arr], axis=0)
+        sources_arr = np.concatenate([existing_sources, new_sources_arr], axis=0)
+    else:
+        embeddings_arr = new_embeddings_arr
+        texts_arr = new_texts_arr
+        sources_arr = new_sources_arr
+        
     print(f"Saving vectors to {OUTPUT_PATH}...")
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
@@ -243,7 +272,7 @@ def main():
         sources=sources_arr
     )
     
-    print(f"✅ Ingestion hoàn tất thành công! Đã lưu {len(texts)} vectors với chiều kích thước: {embeddings_arr.shape}")
+    print(f"✅ Ingestion hoàn tất thành công! Đã lưu tổng cộng {len(texts_arr)} vectors với chiều kích thước: {embeddings_arr.shape}")
 
 if __name__ == "__main__":
     main()

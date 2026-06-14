@@ -248,6 +248,24 @@ def start(config_path: str | Path = "glados_config.yaml") -> None:
     glados.start_listen_event_loop()
 
 
+def dashboard(config_path: str | Path = "glados_config.yaml", host: str = "127.0.0.1", port: int = 8000) -> None:
+    """
+    Start the GLaDOS voice assistant with a web-based telemetry cockpit dashboard.
+    """
+    import threading
+    from .web_server import start_dashboard_server
+
+    glados_config = GladosConfig.from_yaml(str(config_path))
+    glados = Glados.from_config(glados_config)
+
+    # Start the engine event loop in a background daemon thread
+    engine_thread = threading.Thread(target=glados.start_listen_event_loop, daemon=True)
+    engine_thread.start()
+
+    # Start the web server (blocking on the main thread)
+    start_dashboard_server(glados, host=host, port=port)
+
+
 def tui(config_path: str | Path = "glados_config.yaml") -> None:
     """
     Start the GLaDOS voice assistant with a terminal user interface (TUI).
@@ -319,6 +337,27 @@ def main() -> None:
     # TUI command   
     tui_parser = subparsers.add_parser("tui", help="Start GLaDOS voice assistant with TUI")
 
+    # Dashboard command
+    dashboard_parser = subparsers.add_parser("dashboard", help="Start GLaDOS cockpit web dashboard")
+    dashboard_parser.add_argument(
+        "--config",
+        type=str,
+        default=DEFAULT_CONFIG,
+        help=f"Path to configuration file (default: {DEFAULT_CONFIG})",
+    )
+    dashboard_parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Host address to bind to (default: 127.0.0.1)",
+    )
+    dashboard_parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to bind to (default: 8000)",
+    )
+
     # Say command
     say_parser = subparsers.add_parser("say", help="Make GLaDOS speak text")
     say_parser.add_argument("text", type=str, help="Text for GLaDOS to speak")
@@ -342,6 +381,8 @@ def main() -> None:
             start(args.config)
         elif args.command == "tui":
             tui()
+        elif args.command == "dashboard":
+            dashboard(args.config, args.host, args.port)
         else:
             # Default to start if no command specified
             start(DEFAULT_CONFIG)
