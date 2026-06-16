@@ -122,7 +122,10 @@ celerybeat.pid
 
 # Environments
 .env
-.venv
+.venv/
+
+# Ignore config files containing secrets
+configs/glados_config.yaml
 env/
 venv/
 ENV/
