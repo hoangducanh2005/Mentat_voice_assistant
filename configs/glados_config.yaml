@@ -1,7 +1,7 @@
 Glados:
-  completion_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
-  model: "gemini-flash-latest"
-  api_key: "AQ.Ab8RN6JZfWU3Gec_xMqaSWX7Xl_lfC0igevhRp5Ijs9BRknf5A"
+  completion_url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+  model: "gemini-2.5-flash"
+  api_key: "YOUR_API_KEY_HERE"
   api_type: "gemini"
   rag_enabled: true
   rag_top_k: 3
