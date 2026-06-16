@@ -89,9 +89,9 @@ class RagStore:
         headers = {"Content-Type": "application/json"}
         
         if self.api_type == "gemini":
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={self.api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent?key={self.api_key}"
             payload = {
-                "model": "models/text-embedding-004",
+                "model": "models/embedding-001",
                 "content": {
                     "parts": [{"text": query_text}]
                 }
