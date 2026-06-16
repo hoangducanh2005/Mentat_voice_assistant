@@ -89,14 +89,14 @@ class RagStore:
         headers = {"Content-Type": "application/json"}
         
         if self.api_type == "gemini":
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={self.api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={self.api_key}"
             payload = {
-                "model": "models/gemini-embedding-2",
+                "model": "models/text-embedding-004",
                 "content": {
                     "parts": [{"text": query_text}]
                 }
             }
-            response = requests.post(url, headers=headers, json=payload, timeout=15)
+            response = requests.post(url, headers=headers, json=payload, timeout=30)
             response.raise_for_status()
             res_data = response.json()
             vector = res_data.get("embedding", {}).get("values", [])
