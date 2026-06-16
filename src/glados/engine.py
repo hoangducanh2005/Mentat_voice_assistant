@@ -147,6 +147,7 @@ class Glados:
         rag_enabled: bool = True,
         rag_top_k: int = 3,
         manual_trigger_required: bool = False,
+        use_mic_speaker: bool = True,
     ) -> None:
         """
         Initialize the Glados voice assistant with configuration parameters.
@@ -219,6 +220,7 @@ class Glados:
                 self.rag_enabled = False
 
         self.manual_trigger_required = manual_trigger_required
+        self.use_mic_speaker = use_mic_speaker
 
         # Web UI Event Callbacks
         self.on_state_change = None
@@ -228,6 +230,7 @@ class Glados:
         self.on_rag = None
         self.on_log = None
         self.on_latency_profile = None
+        self.on_audio_out = None
         
         self.current_turn_latency = {
             "vad": 32.0,
@@ -245,6 +248,7 @@ class Glados:
         self._samples: list[NDArray[np.float32]] = []
         self._sample_queue: queue.Queue[tuple[NDArray[np.float32], bool]] = queue.Queue()
         self._buffer: queue.Queue[NDArray[np.float32]] = queue.Queue(maxsize=self.BUFFER_SIZE // self.VAD_SIZE)
+        self._incoming_buffer = np.array([], dtype=np.float32)
         self._recording_started = False
         self._gap_counter = 0
         # Manual trigger for noisy environments: when True, start recording even if VAD is low
@@ -274,9 +278,12 @@ class Glados:
         if announcement:
             audio = self._tts.synthesize_audio(announcement)
             logger.success(f"TTS text: {announcement}")
-            sd.play(audio, self._tts.sample_rate)
-            if not self.interruptible:
-                sd.wait()
+            if self.use_mic_speaker:
+                sd.play(audio, self._tts.sample_rate)
+                if not self.interruptible:
+                    sd.wait()
+            elif self.on_audio_out:
+                self.on_audio_out(audio, announcement)
 
         def audio_callback_for_sd_input_stream(
             indata: np.dtype[np.float32],
@@ -314,12 +321,32 @@ class Glados:
             vad_confidence = vad_value > self.VAD_THRESHOLD
             self._sample_queue.put((data, bool(vad_confidence)))
 
-        self.input_stream = sd.InputStream(
-            samplerate=self.SAMPLE_RATE,
-            channels=1,
-            callback=audio_callback_for_sd_input_stream,
-            blocksize=int(self.SAMPLE_RATE * self.VAD_SIZE / 1000),
-        )
+        if self.use_mic_speaker:
+            self.input_stream = sd.InputStream(
+                samplerate=self.SAMPLE_RATE,
+                channels=1,
+                callback=audio_callback_for_sd_input_stream,
+                blocksize=int(self.SAMPLE_RATE * self.VAD_SIZE / 1000),
+            )
+        else:
+            self.input_stream = None
+
+    def push_audio_chunk(self, data: np.ndarray) -> None:
+        """Called by external server to push audio chunks"""
+        if self.currently_speaking.is_set():
+            return
+            
+        data = data.copy().squeeze()
+        self._incoming_buffer = np.concatenate((self._incoming_buffer, data))
+        
+        chunk_size = int(self.SAMPLE_RATE * self.VAD_SIZE / 1000)
+        while len(self._incoming_buffer) >= chunk_size:
+            chunk = self._incoming_buffer[:chunk_size]
+            self._incoming_buffer = self._incoming_buffer[chunk_size:]
+            
+            vad_value = self._vad_model(np.expand_dims(chunk, 0))
+            vad_confidence = vad_value > self.VAD_THRESHOLD
+            self._sample_queue.put((chunk, bool(vad_confidence)))
 
     def _update_state(self, state: str) -> None:
         """Helper to update internal state and trigger UI callbacks."""
@@ -341,7 +368,7 @@ class Glados:
         return self._messages
 
     @classmethod
-    def from_config(cls, config: GladosConfig) -> "Glados":
+    def from_config(cls, config: GladosConfig, use_mic_speaker: bool = True) -> "Glados":
         """
         Create a Glados instance from a GladosConfig configuration object.
 
@@ -375,6 +402,7 @@ class Glados:
             rag_enabled=config.rag_enabled,
             rag_top_k=config.rag_top_k,
             manual_trigger_required=config.manual_trigger_required,
+            use_mic_speaker=use_mic_speaker,
         )
 
     @classmethod
@@ -423,7 +451,8 @@ class Glados:
         Raises:
             KeyboardInterrupt: Allows graceful termination of the listening loop
         """
-        self.input_stream.start()
+        if self.input_stream:
+            self.input_stream.start()
         logger.success("Audio Modules Operational")
         logger.success("Listening...")
         self._update_state("IDLE")
@@ -434,7 +463,8 @@ class Glados:
                 self._handle_audio_sample(sample, vad_confidence)
         except KeyboardInterrupt:
             self.shutdown_event.set()
-            self.input_stream.stop()
+            if self.input_stream:
+                self.input_stream.stop()
 
     def _handle_audio_sample(self, sample: NDArray[np.float32], vad_confidence: bool) -> None:
         """
@@ -488,7 +518,8 @@ class Glados:
                 logger.info("Interruption is disabled, and the assistant is currently speaking, ignoring new input.")
                 return
 
-            sd.stop()  # Stop the audio stream to prevent overlap
+            if self.use_mic_speaker:
+                sd.stop()  # Stop the audio stream to prevent overlap
             self.processing = False  # Turns off processing on threads for the LLM and TTS!!!
             self._samples = list(self._buffer.queue)
             self._recording_started = True
@@ -779,6 +810,22 @@ class Glados:
         interrupted = False
         progress = 0
         completion_event = threading.Event()
+
+        if not self.use_mic_speaker:
+            # In web mode, we don't use sd.OutputStream. We wait synchronously 
+            # while allowing for interruptions from the main thread.
+            start_time = time.time()
+            expected_duration = total_samples / self._tts.sample_rate
+            
+            while time.time() - start_time < expected_duration:
+                if self.processing is False or self.shutdown_event.is_set():
+                    interrupted = True
+                    break
+                time.sleep(0.01)
+                progress = int((time.time() - start_time) * self._tts.sample_rate)
+                
+            percentage_played = min(int(progress / total_samples * 100), 100)
+            return interrupted, percentage_played
 
         def stream_callback(
             outdata: NDArray[np.float32], frames: int, time: dict[str, Any], status: sd.CallbackFlags
@@ -1249,7 +1296,14 @@ class Glados:
                         except Exception as e:
                             logger.error(f"Error in on_assistant callback: {e}")
                     
-                    sd.play(audio_msg.audio, self._tts.sample_rate)
+                    if self.use_mic_speaker:
+                        sd.play(audio_msg.audio, self._tts.sample_rate)
+                    elif self.on_audio_out:
+                        try:
+                            self.on_audio_out(audio_msg.audio, audio_msg.text)
+                        except Exception as e:
+                            logger.error(f"Error in on_audio_out callback: {e}")
+                    
                     total_samples = len(audio_msg.audio)
 
                     logger.success(f"TTS text: {audio_msg.text}")

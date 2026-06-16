@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mentat Voice Assistant</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Mentat Voice Assistant</h1>
+        <div id="status">Trạng thái: Đang kết nối...</div>
+        <button id="startBtn" disabled>Bắt đầu nghe (Start)</button>
+        <button id="stopBtn" disabled>Dừng (Stop)</button>
+        <div id="transcriptBox">
+            <h3>Nội dung thu âm:</h3>
+            <p id="transcript">...</p>
+        </div>
+        <div id="responseBox">
+            <h3>Mentat trả lời:</h3>
+            <p id="response">...</p>
+        </div>
+    </div>
+    <script src="/static/app.js"></script>
+</body>
+</html>
