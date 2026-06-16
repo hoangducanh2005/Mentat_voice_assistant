@@ -60,3 +60,29 @@ When a user triggers the system, the UI visually mirrors the technical pipeline 
 3.  **Retrieval Phase:** Zone 3 flashes. The telemetry terminal prints the execution times, and the top-3 matching data cards slide into view, displaying their mathematical confidence scores.
 4.  **LLM Formulation:** The exact prompt structure (Context + Preprompt + Query) is visualized as a compiled payload before it hits the completion endpoint.
 5.  **Vocal Output (Speaking):** Zone 1 switches to `SPEAKING` as the simulated waveform pulses in sync with the audio playback. Zone 2 streams the text response simultaneously.
+
+---
+
+## 4. Multi-Tab Interface Specification
+
+To accommodate both conversational testing and performance engineering, the dashboard is divided into two tabs:
+
+*   **Tab 1: Conversational Cockpit**: Displays Zone 1, Zone 2, and Zone 3 (V2 dashboard) to handle real-time voice, transcripts, RAG context cards, and logs.
+*   **Tab 2: Hardware Monitor**: Focused on Edge hardware-software metrics and latency profiling.
+
+### Tab 2: Hardware Monitor
+This tab shifts the focus from the conversational interface to the underlying hardware-software synergy. It is designed to demonstrate system efficiency, real-time profiling, and the viability of running the AI pipeline on resource-constrained edge devices (e.g., local single-board computers).
+
+* **Hardware Resource Allocation (Local Device):**
+    * **CPU/NPU Usage:** Real-time gauge charts tracking the processing load. Differentiates between idle state and active active inference state.
+    * **Memory Footprint:** Tracks RAM consumption, specifically isolating the memory allocated to the local ASR model (e.g., Zipformer/Parakeet) and the in-memory NumPy vector store (`vectors.npz`).
+    * **Thermal Monitoring:** A critical metric for edge deployment. Displays the CPU temperature with visual threshold warnings to demonstrate awareness of thermal throttling during continuous LLM/ASR operations.
+
+* **Pipeline Latency Profiler (Waterfall Chart):**
+    * A horizontal stacked bar chart (Gantt-style) breaking down the exact microsecond latency of a single conversational turn. 
+    * Visually segments the time spent on: `VAD Activation` $\rightarrow$ `ASR Transcription` $\rightarrow$ `RAG Matrix Multiplication (NumPy)` $\rightarrow$ `LLM API Network Latency` $\rightarrow$ `TTS Audio Generation`. 
+    * **Purpose:** Proves that the local system architecture is not the bottleneck, highlighting the optimization of the NumPy-based Cosine Similarity execution (< 1ms).
+
+* **Network & I/O Diagnostics:**
+    * **API Payload Efficiency:** Displays the token count and payload size (in KB) sent to and received from the LLM endpoint to prove prompt optimization and prevent token bloat.
+    * **Storage Read/Write:** Monitors disk I/O when loading the knowledge base, ensuring zero-latency context retrieval.. Cần triển khai luồng độc lập Để hệ thống không bị ảnh hưởng, bạn phải tách Telemetry ra thành một Background Worker (Luồng chạy ngầm) hoàn toàn độc lập với phần lõi của Mentat.

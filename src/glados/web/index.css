@@ -359,7 +359,7 @@ body::before {
 
 .oscilloscope-container {
     position: relative;
-    background: #0d0f12; /* Dark cathode display screen for maximum contrast */
+    background: var(--bg-dark); /* Blends with the Sand panel workspace */
     border: 1px solid var(--border-color);
     border-radius: 8px;
     height: 180px;
@@ -367,7 +367,7 @@ body::before {
     align-items: center;
     justify-content: center;
     overflow: hidden;
-    box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.8);
+    box-shadow: inset 0 2px 6px rgba(51, 49, 40, 0.06);
 }
 
 .oscilloscope-container canvas {
@@ -603,7 +603,7 @@ body::before {
 
 .terminal-body {
     flex: 1;
-    background: #0d0f12;
+    background: var(--bg-dark); /* Blends with the Sand panel workspace */
     border: 1px solid var(--border-color);
     border-radius: 6px;
     padding: 12px;
@@ -613,7 +613,7 @@ body::before {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    box-shadow: inset 0 0 15px rgba(0,0,0,0.9);
+    box-shadow: inset 0 2px 6px rgba(51, 49, 40, 0.06);
 }
 
 .terminal-body::-webkit-scrollbar {
@@ -621,7 +621,7 @@ body::before {
 }
 
 .terminal-body::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--border-color);
     border-radius: 3px;
 }
 
@@ -629,15 +629,16 @@ body::before {
     line-height: 1.3;
     white-space: pre-wrap;
     word-break: break-all;
+    color: var(--text-primary);
 }
 
-/* Logging Level Colors */
-.log-line.level-success { color: var(--status-speaking); }
+/* Logging Level Colors adapted for light parchment backgrounds */
+.log-line.level-success { color: var(--status-speaking); font-weight: 600; }
 .log-line.level-info { color: var(--accent-cobalt); }
-.log-line.level-debug { color: #8fa0b5; }
-.log-line.level-warning { color: #ff9f43; }
-.log-line.level-error { color: #ff3838; }
-.log-line.system-line { color: #7f8c8d; }
+.log-line.level-debug { color: #888060; } /* darker sandy gold */
+.log-line.level-warning { color: var(--accent-amber); font-weight: 600; }
+.log-line.level-error { color: #c0392b; font-weight: 600; }
+.log-line.system-line { color: #6f6d64; }
 
 /* STATE STYLING MODIFIERS */
 .state-idle .status-display { border-left-color: var(--status-idle); }
@@ -692,3 +693,328 @@ body::before {
         height: 100%;
     }
 }
+
+/* Tab Navigation Styles */
+.cockpit-tabs {
+    display: flex;
+    gap: 8px;
+}
+
+.tab-btn {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-muted);
+    font-family: var(--font-display);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.tab-btn:hover {
+    color: var(--text-light);
+    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-btn.active {
+    background: var(--accent-amber);
+    color: var(--text-light);
+    border-color: var(--accent-amber);
+    box-shadow: 0 0 10px var(--accent-amber-glow);
+}
+
+.tab-content {
+    display: none;
+    flex: 1;
+    min-height: 0;
+}
+
+.tab-content.active {
+    display: flex;
+}
+
+/* Hardware Monitor Grid */
+.hardware-grid {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    flex: 1;
+    gap: 16px;
+    min-height: 0;
+}
+
+/* Row 1: Hardware Metrics Cards (CPU, Memory, Thermals) */
+.metrics-panel-body {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    align-items: center;
+}
+
+.metric-card {
+    background: #fbfbf7;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    text-align: center;
+    transition: border-color 0.2s ease;
+}
+
+.metric-card:hover {
+    border-color: rgba(202, 97, 27, 0.25);
+}
+
+.metric-title {
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #6f6d64;
+}
+
+.gauge-container {
+    position: relative;
+    width: 110px;
+    height: 110px;
+}
+
+.gauge-svg {
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+}
+
+.gauge-bg {
+    fill: none;
+    stroke: var(--bg-darker);
+    stroke-width: 8;
+}
+
+.gauge-fill {
+    fill: none;
+    stroke: var(--accent-amber);
+    stroke-width: 8;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#ram-gauge {
+    stroke: var(--accent-cobalt);
+}
+
+#temp-gauge {
+    stroke: var(--accent-amber);
+    transition: stroke 0.5s ease, stroke-dashoffset 0.8s ease;
+}
+
+.gauge-value {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: var(--font-mono);
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.metric-subtitle {
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+}
+
+.ram-breakdown {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    border-top: 1px dashed var(--border-color);
+    padding-top: 8px;
+    color: var(--text-primary);
+}
+
+.ram-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.color-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+}
+
+.color-dot.asr-dot {
+    background-color: var(--accent-cobalt);
+}
+
+.color-dot.rag-dot {
+    background-color: var(--accent-amber);
+}
+
+.color-dot.other-dot {
+    background-color: #aaa27b;
+}
+
+/* Pipeline Latency Waterfall Chart */
+.waterfall-container {
+    background: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.waterfall-chart {
+    display: flex;
+    height: 36px;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid var(--border-color);
+}
+
+.waterfall-segment {
+    height: 100%;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    color: #fff;
+    font-family: var(--font-mono);
+    font-weight: bold;
+    font-size: 0.7rem;
+    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
+
+.segment-vad {
+    background-color: #888060;
+}
+
+.segment-asr {
+    background-color: var(--accent-cobalt);
+}
+
+.segment-rag {
+    background-color: #27ae60;
+}
+
+.segment-llm {
+    background-color: var(--accent-amber);
+}
+
+.segment-tts {
+    background-color: #8e44ad;
+}
+
+.segment-label {
+    letter-spacing: 0.5px;
+    font-weight: 700;
+}
+
+.segment-duration {
+    font-size: 0.65rem;
+    opacity: 0.9;
+}
+
+.waterfall-legend {
+    display: flex;
+    justify-content: flex-end;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    font-weight: 700;
+}
+
+.latency-legend-table {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.legend-row {
+    display: flex;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-primary);
+}
+
+.legend-row .color-dot {
+    margin-right: 8px;
+    width: 10px;
+    height: 10px;
+}
+
+.color-dot.segment-vad-dot { background-color: #888060; }
+.color-dot.segment-asr-dot { background-color: var(--accent-cobalt); }
+.color-dot.segment-rag-dot { background-color: #27ae60; }
+.color-dot.segment-llm-dot { background-color: var(--accent-amber); }
+.color-dot.segment-tts-dot { background-color: #8e44ad; }
+
+/* Diagnostics & Payload Panel */
+.diagnostics-panel-body {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+}
+
+.diag-card {
+    background: #fbfbf7;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: border-color 0.2s ease;
+}
+
+.diag-card:hover {
+    border-color: rgba(0, 118, 190, 0.25);
+}
+
+.diag-title {
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #6f6d64;
+}
+
+.diag-value {
+    font-family: var(--font-mono);
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--accent-cobalt);
+}
+
+.diag-meta {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    line-height: 1.3;
+}
+

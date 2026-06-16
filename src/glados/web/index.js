@@ -16,32 +16,32 @@ const stateConfigs = {
         amplitude: 6,
         frequency: 0.012,
         speed: 0.04,
-        color: '#8b9bb4',
-        glow: 'rgba(139, 155, 180, 0.2)'
+        color: '#aaa27b', // Sandy dust
+        glow: 'rgba(170, 162, 123, 0.2)'
     },
     'LISTENING': {
         waveCount: 3,
         amplitude: 28,
         frequency: 0.025,
         speed: 0.16,
-        color: '#00e5ff',
-        glow: 'rgba(0, 229, 255, 0.4)'
+        color: '#0076be', // Eyes of Ibad Cobalt
+        glow: 'rgba(0, 118, 190, 0.3)'
     },
     'THINKING': {
         waveCount: 2,
         amplitude: 12,
         frequency: 0.04,
         speed: 0.08,
-        color: '#d27d2d',
-        glow: 'rgba(210, 125, 45, 0.4)'
+        color: '#ca611b', // Spice Orange/Rust
+        glow: 'rgba(202, 97, 27, 0.3)'
     },
     'SPEAKING': {
         waveCount: 2,
         amplitude: 22,
         frequency: 0.018,
         speed: 0.12,
-        color: '#39ff14',
-        glow: 'rgba(57, 255, 20, 0.4)'
+        color: '#2d8a2d', // Forest green
+        glow: 'rgba(45, 138, 45, 0.3)'
     }
 };
 
@@ -248,8 +248,6 @@ function connectWebSocket() {
                     break;
 
                 case 'assistant_sentence':
-                    // If we receive a full sentence (e.g. from TTS synthesis thread), we can also backup display it
-                    // but the chunk-based stream is faster and covers character streaming.
                     break;
                     
                 case 'rag':
@@ -258,8 +256,15 @@ function connectWebSocket() {
                     
                 case 'log':
                     addLogLine(msg.data);
-                    // Update telemetry gauges if performance info is logged
                     parseTelemetryFromLog(msg.data.message);
+                    break;
+
+                case 'hardware':
+                    updateHardwareMetrics(msg.data);
+                    break;
+
+                case 'latency_profile':
+                    updateLatencyProfile(msg.data);
                     break;
             }
         } catch(e) {
@@ -283,39 +288,164 @@ function connectWebSocket() {
 
 // Telemetry values parsing from standard Loguru output
 function parseTelemetryFromLog(message) {
-    // 1. ASR Execution time
     if (message.includes('ASR execution completed in')) {
         const match = message.match(/ASR execution completed in ([\d.]+)ms/);
         if (match) {
             const ms = parseFloat(match[1]);
             document.getElementById('telemetry-asr-val').textContent = `${ms.toFixed(1)} ms`;
-            // Normal scale: 0 to 1000ms
             const pct = Math.min((ms / 1000) * 100, 100);
             document.getElementById('telemetry-asr-bar').style.width = `${pct}%`;
         }
     }
-    // 2. RAG execution time
     else if (message.includes('NumPy cosine similarity search completed in')) {
         const match = message.match(/NumPy cosine similarity search completed in ([\d.]+)ms/);
         if (match) {
             const ms = parseFloat(match[1]);
             document.getElementById('telemetry-rag-val').textContent = `${ms.toFixed(1)} ms`;
-            // Normal scale: 0 to 100ms
             const pct = Math.min((ms / 100) * 100, 100);
             document.getElementById('telemetry-rag-bar').style.width = `${pct}%`;
         }
     }
-    // 3. Audio chunk length
     else if (message.includes('VAD triggered. Processing audio chunk of length')) {
         const match = message.match(/Processing audio chunk of length ([\d.]+)s/);
         if (match) {
             const sec = parseFloat(match[1]);
             document.getElementById('telemetry-audio-val').textContent = `${sec.toFixed(2)} s`;
-            // Normal scale: 0 to 8s
             const pct = Math.min((sec / 8) * 100, 100);
             document.getElementById('telemetry-audio-bar').style.width = `${pct}%`;
         }
     }
+}
+
+// Tab Switching
+window.switchTab = function(tabName) {
+    document.querySelectorAll('.tab-content').forEach(el => {
+        el.classList.remove('active');
+    });
+    document.querySelectorAll('.tab-btn').forEach(el => {
+        el.classList.remove('active');
+    });
+    
+    const targetContent = document.getElementById(`tab-${tabName}`);
+    if (targetContent) {
+        targetContent.classList.add('active');
+    }
+    const targetBtn = document.getElementById(`tab-btn-${tabName}`);
+    if (targetBtn) {
+        targetBtn.classList.add('active');
+    }
+    
+    addSystemLog(`Switched view to: ${tabName.toUpperCase()}`);
+};
+
+// Update Hardware Metrics Display
+function updateHardwareMetrics(data) {
+    // CPU Gauge
+    const cpuVal = data.cpu_percent || 0;
+    const cpuGauge = document.getElementById('cpu-gauge');
+    if (cpuGauge) {
+        const offset = 251.2 - (251.2 * cpuVal / 100);
+        cpuGauge.style.strokeDashoffset = offset;
+    }
+    const cpuValEl = document.getElementById('cpu-value');
+    if (cpuValEl) cpuValEl.textContent = `${Math.round(cpuVal)}%`;
+    
+    const cpuStateEl = document.getElementById('cpu-state-label');
+    if (cpuStateEl) {
+        cpuStateEl.textContent = currentState === 'IDLE' ? 'IDLE STATE' : 'ACTIVE INFERENCE';
+    }
+
+    // RAM Gauge
+    const ramVal = data.system_ram_percent || 0;
+    const ramGauge = document.getElementById('ram-gauge');
+    if (ramGauge) {
+        const offset = 251.2 - (251.2 * ramVal / 100);
+        ramGauge.style.strokeDashoffset = offset;
+    }
+    const ramValEl = document.getElementById('ram-value');
+    if (ramValEl) ramValEl.textContent = `${Math.round(ramVal)}%`;
+
+    // RAM Breakdown
+    const asrMb = Math.round(data.asr_mem / (1024 * 1024)) || 0;
+    const ragMb = Math.round(data.rag_mem / (1024 * 1024)) || 0;
+    const otherMb = Math.round(data.other_mem / (1024 * 1024)) || 0;
+    
+    const ramAsrEl = document.getElementById('ram-asr');
+    if (ramAsrEl) ramAsrEl.textContent = `${asrMb} MB`;
+    const ramRagEl = document.getElementById('ram-rag');
+    if (ramRagEl) ramRagEl.textContent = `${ragMb} MB`;
+    const ramOtherEl = document.getElementById('ram-other');
+    if (ramOtherEl) ramOtherEl.textContent = `${otherMb} MB`;
+
+    // Temperature Gauge
+    const tempVal = data.cpu_temp || 40.0;
+    const tempGauge = document.getElementById('temp-gauge');
+    if (tempGauge) {
+        const tempPercent = Math.min(Math.max((tempVal - 30) / (90 - 30) * 100, 0), 100);
+        const offset = 251.2 - (251.2 * tempPercent / 100);
+        tempGauge.style.strokeDashoffset = offset;
+        
+        if (tempVal >= 75) {
+            tempGauge.style.stroke = '#c0392b';
+            document.getElementById('temp-status').textContent = 'THROTTLING RISK';
+            document.getElementById('temp-status').style.color = '#c0392b';
+        } else if (tempVal >= 60) {
+            tempGauge.style.stroke = 'var(--accent-amber)';
+            document.getElementById('temp-status').textContent = 'ELEVATED TEMP';
+            document.getElementById('temp-status').style.color = 'var(--accent-amber)';
+        } else {
+            tempGauge.style.stroke = 'var(--accent-cobalt)';
+            document.getElementById('temp-status').textContent = 'NORMAL TEMP';
+            document.getElementById('temp-status').style.color = 'var(--text-muted)';
+        }
+    }
+    const tempValEl = document.getElementById('temp-value');
+    if (tempValEl) tempValEl.textContent = `${tempVal.toFixed(1)}°C`;
+}
+
+// Update Latency Profile Waterfall Display
+function updateLatencyProfile(data) {
+    const vad = data.vad || 0.0;
+    const asr = data.asr || 0.0;
+    const rag = data.rag || 0.0;
+    const llm = data.llm || 0.0;
+    const tts = data.tts || 0.0;
+    const total = vad + asr + rag + llm + tts;
+    
+    document.getElementById('tbl-vad').textContent = `${vad.toFixed(1)} ms`;
+    document.getElementById('tbl-asr').textContent = `${asr.toFixed(1)} ms`;
+    document.getElementById('tbl-rag').textContent = `${rag.toFixed(2)} ms`;
+    document.getElementById('tbl-llm').textContent = `${llm.toFixed(1)} ms`;
+    document.getElementById('tbl-tts').textContent = `${tts.toFixed(1)} ms`;
+    document.getElementById('dur-total').textContent = `${total.toFixed(1)} ms`;
+
+    if (total > 0) {
+        document.getElementById('segment-vad').style.width = `${(vad / total * 100)}%`;
+        document.getElementById('segment-asr').style.width = `${(asr / total * 100)}%`;
+        document.getElementById('segment-rag').style.width = `${(rag / total * 100)}%`;
+        document.getElementById('segment-llm').style.width = `${(llm / total * 100)}%`;
+        document.getElementById('segment-tts').style.width = `${(tts / total * 100)}%`;
+        
+        document.getElementById('dur-vad').textContent = `${Math.round(vad)} ms`;
+        document.getElementById('dur-asr').textContent = `${Math.round(asr)} ms`;
+        document.getElementById('dur-rag').textContent = `${rag.toFixed(1)} ms`;
+        document.getElementById('dur-llm').textContent = `${Math.round(llm)} ms`;
+        document.getElementById('dur-tts').textContent = `${Math.round(tts)} ms`;
+    } else {
+        document.getElementById('segment-vad').style.width = '0%';
+        document.getElementById('segment-asr').style.width = '0%';
+        document.getElementById('segment-rag').style.width = '0%';
+        document.getElementById('segment-llm').style.width = '0%';
+        document.getElementById('segment-tts').style.width = '0%';
+    }
+
+    const payloadSize = data.payload_size_kb || 0.0;
+    const promptTokens = data.prompt_tokens || 0;
+    const responseTokens = data.response_tokens || 0;
+    
+    document.getElementById('diag-payload-size').textContent = `${payloadSize.toFixed(2)} KB`;
+    document.getElementById('diag-prompt-tokens').textContent = promptTokens;
+    document.getElementById('diag-response-tokens').textContent = responseTokens;
 }
 
 // Setup Event Listeners

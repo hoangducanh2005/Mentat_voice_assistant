@@ -18,10 +18,16 @@
                 <div class="logo-orb"></div>
                 <h1>MENTAT<span>COCKPIT_V2</span></h1>
             </div>
+            <nav class="cockpit-tabs">
+                <button class="tab-btn active" id="tab-btn-conversational" onclick="switchTab('conversational')">COGNITIVE COCKPIT</button>
+                <button class="tab-btn" id="tab-btn-hardware" onclick="switchTab('hardware')">HARDWARE MONITOR</button>
+            </nav>
             <div class="system-time" id="system-time">00:00:00.000</div>
         </header>
 
-        <main class="cockpit-grid">
+        <!-- TAB CONTENT: CONVERSATIONAL -->
+        <div id="tab-conversational" class="tab-content active">
+            <main class="cockpit-grid">
             
             <!-- LEFT PANEL: CONTROLS & TELEMETRY -->
             <section class="panel panel-left" aria-label="Controls and System Telemetry">
@@ -144,6 +150,147 @@
             </section>
 
         </main>
+        </div>
+
+        <!-- TAB CONTENT: HARDWARE MONITOR -->
+        <div id="tab-hardware" class="tab-content">
+            <main class="hardware-grid">
+                <!-- Row 1: Hardware Metrics Cards (CPU, Memory, Thermals) -->
+                <section class="panel panel-metrics" aria-label="Device Hardware Metrics">
+                    <div class="panel-header">
+                        <h2>HARDWARE_METRICS</h2>
+                    </div>
+                    <div class="panel-body metrics-panel-body">
+                        <!-- CPU Gauge Widget -->
+                        <div class="metric-card">
+                            <div class="metric-title">CPU / NPU LOAD</div>
+                            <div class="gauge-container">
+                                <svg class="gauge-svg" viewBox="0 0 100 100">
+                                    <circle class="gauge-bg" cx="50" cy="50" r="40" />
+                                    <circle class="gauge-fill" id="cpu-gauge" cx="50" cy="50" r="40" stroke-dasharray="251.2" stroke-dashoffset="251.2" />
+                                </svg>
+                                <div class="gauge-value" id="cpu-value">0%</div>
+                            </div>
+                            <div class="metric-subtitle" id="cpu-state-label">IDLE STATE</div>
+                        </div>
+
+                        <!-- RAM Footprint Widget -->
+                        <div class="metric-card">
+                            <div class="metric-title">RAM ALLOCATION</div>
+                            <div class="gauge-container">
+                                <svg class="gauge-svg" viewBox="0 0 100 100">
+                                    <circle class="gauge-bg" cx="50" cy="50" r="40" />
+                                    <circle class="gauge-fill" id="ram-gauge" cx="50" cy="50" r="40" stroke-dasharray="251.2" stroke-dashoffset="251.2" />
+                                </svg>
+                                <div class="gauge-value" id="ram-value">0%</div>
+                            </div>
+                            <div class="ram-breakdown">
+                                <div class="ram-item"><span>ASR Model</span> <span id="ram-asr">0 MB</span></div>
+                                <div class="ram-item"><span>Vector DB</span> <span id="ram-rag">0 MB</span></div>
+                                <div class="ram-item"><span>Other / Engine</span> <span id="ram-other">0 MB</span></div>
+                            </div>
+                        </div>
+
+                        <!-- Thermal Monitor Widget -->
+                        <div class="metric-card" id="thermal-card">
+                            <div class="metric-title">THERMAL MONITOR</div>
+                            <div class="gauge-container">
+                                <svg class="gauge-svg" viewBox="0 0 100 100">
+                                    <circle class="gauge-bg" cx="50" cy="50" r="40" />
+                                    <circle class="gauge-fill" id="temp-gauge" cx="50" cy="50" r="40" stroke-dasharray="251.2" stroke-dashoffset="251.2" />
+                                </svg>
+                                <div class="gauge-value" id="temp-value">42°C</div>
+                            </div>
+                            <div class="metric-subtitle" id="temp-status">NORMAL TEMPERATURE</div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Row 2: Pipeline Latency Profiler (Waterfall Chart) -->
+                <section class="panel panel-waterfall" aria-label="Pipeline Latency Waterfall Chart">
+                    <div class="panel-header">
+                        <h2>PIPELINE_LATENCY_PROFILER (WATERFALL)</h2>
+                    </div>
+                    <div class="panel-body">
+                        <div class="waterfall-container">
+                            <div class="waterfall-chart">
+                                <!-- VAD segment -->
+                                <div class="waterfall-segment segment-vad" id="segment-vad" style="width: 0%;">
+                                    <div class="segment-label">VAD</div>
+                                    <div class="segment-duration" id="dur-vad">0 ms</div>
+                                </div>
+                                <!-- ASR segment -->
+                                <div class="waterfall-segment segment-asr" id="segment-asr" style="width: 0%;">
+                                    <div class="segment-label">ASR</div>
+                                    <div class="segment-duration" id="dur-asr">0 ms</div>
+                                </div>
+                                <!-- RAG segment -->
+                                <div class="waterfall-segment segment-rag" id="segment-rag" style="width: 0%;">
+                                    <div class="segment-label">RAG</div>
+                                    <div class="segment-duration" id="dur-rag">0 ms</div>
+                                </div>
+                                <!-- LLM segment -->
+                                <div class="waterfall-segment segment-llm" id="segment-llm" style="width: 0%;">
+                                    <div class="segment-label">LLM (API)</div>
+                                    <div class="segment-duration" id="dur-llm">0 ms</div>
+                                </div>
+                                <!-- TTS segment -->
+                                <div class="waterfall-segment segment-tts" id="segment-tts" style="width: 0%;">
+                                    <div class="segment-label">TTS</div>
+                                    <div class="segment-duration" id="dur-tts">0 ms</div>
+                                </div>
+                            </div>
+                            <!-- X axis / grid legend -->
+                            <div class="waterfall-legend">
+                                <div class="legend-indicator">Total turn latency: <span id="dur-total">0 ms</span></div>
+                            </div>
+                        </div>
+
+                        <!-- Mini breakdown table -->
+                        <div class="latency-legend-table">
+                            <div class="legend-row"><span class="color-dot segment-vad-dot"></span> VAD Activation: <span id="tbl-vad">0 ms</span></div>
+                            <div class="legend-row"><span class="color-dot segment-asr-dot"></span> ASR (Zipformer/Parakeet): <span id="tbl-asr">0 ms</span></div>
+                            <div class="legend-row"><span class="color-dot segment-rag-dot"></span> RAG Matrix Multiplication (NumPy Cosine Sim): <span id="tbl-rag">0 ms</span></div>
+                            <div class="legend-row"><span class="color-dot segment-llm-dot"></span> LLM Network API Roundtrip: <span id="tbl-llm">0 ms</span></div>
+                            <div class="legend-row"><span class="color-dot segment-tts-dot"></span> TTS Audio Generation (Kokoro): <span id="tbl-tts">0 ms</span></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Row 3: Diagnostics Details -->
+                <section class="panel panel-diagnostics" aria-label="Network and Disk Diagnostics">
+                    <div class="panel-header">
+                        <h2>DIAGNOSTICS & PAYLOAD EFFICIENCY</h2>
+                    </div>
+                    <div class="panel-body diagnostics-panel-body">
+                        <!-- API Payload card -->
+                        <div class="diag-card">
+                            <div class="diag-title">API PAYLOAD SIZE</div>
+                            <div class="diag-value" id="diag-payload-size">0.00 KB</div>
+                            <div class="diag-meta">Total serialized text payload (Prompt + Response)</div>
+                        </div>
+                        <!-- Estimated Prompt Tokens card -->
+                        <div class="diag-card">
+                            <div class="diag-title">PROMPT CHARACTERS</div>
+                            <div class="diag-value" id="diag-prompt-tokens">0</div>
+                            <div class="diag-meta">Input size injected into LLM context</div>
+                        </div>
+                        <!-- Response Tokens card -->
+                        <div class="diag-card">
+                            <div class="diag-title">RESPONSE CHARACTERS</div>
+                            <div class="diag-value" id="diag-response-tokens">0</div>
+                            <div class="diag-meta">Output characters synthesized by TTS</div>
+                        </div>
+                        <!-- Vector DB Info card -->
+                        <div class="diag-card">
+                            <div class="diag-title">LOCAL KNOWLEDGE DATASTORE</div>
+                            <div class="diag-value">vectors.npz</div>
+                            <div class="diag-meta">NumPy memory map loaded. Memory usage: ~10 MB</div>
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
     </div>
     <script src="index.js"></script>
 </body>

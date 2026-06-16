@@ -227,6 +227,19 @@ class Glados:
         self.on_assistant_chunk = None
         self.on_rag = None
         self.on_log = None
+        self.on_latency_profile = None
+        
+        self.current_turn_latency = {
+            "vad": 32.0,
+            "asr": 0.0,
+            "rag": 0.0,
+            "llm": 0.0,
+            "tts": 0.0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "payload_size_kb": 0.0
+        }
+        self.is_first_sentence = False
 
         # Initialize sample queues and state flags
         self._samples: list[NDArray[np.float32]] = []
@@ -591,11 +604,14 @@ class Glados:
         logger.debug("Detected pause after speech. Processing...")
         audio_duration_s = sum(len(s) for s in self._samples) / self.SAMPLE_RATE
         logger.success(f"VAD triggered. Processing audio chunk of length {audio_duration_s:.2f}s")
+        self.current_turn_latency["vad"] = audio_duration_s * 1000 # in ms
+        self._is_voice_turn = True
         
         start_time = time.perf_counter()
         detected_text = self.asr(self._samples)
         asr_duration_ms = (time.perf_counter() - start_time) * 1000
         logger.success(f"ASR execution completed in {asr_duration_ms:.3f}ms")
+        self.current_turn_latency["asr"] = asr_duration_ms
 
         if detected_text:
             logger.success(f"ASR text: '{detected_text}'")
@@ -826,6 +842,23 @@ class Glados:
         while not self.shutdown_event.is_set():
             try:
                 detected_text = self.llm_queue.get(timeout=0.1)
+                
+                # Setup voice vs text turn check
+                is_voice = getattr(self, "_is_voice_turn", False)
+                if is_voice:
+                    self._is_voice_turn = False
+                else:
+                    self.current_turn_latency["vad"] = 0.0
+                    self.current_turn_latency["asr"] = 0.0
+                
+                self.current_turn_latency["rag"] = 0.0
+                self.current_turn_latency["llm"] = 0.0
+                self.current_turn_latency["tts"] = 0.0
+                self.current_turn_latency["prompt_tokens"] = 0
+                self.current_turn_latency["response_tokens"] = 0
+                self.current_turn_latency["payload_size_kb"] = 0.0
+                self.is_first_sentence = True
+
                 self.messages.append({"role": "user", "content": detected_text})
 
                 # Perform RAG query context injection if enabled
@@ -837,6 +870,7 @@ class Glados:
                         retrieved = self.rag_store.search(detected_text, top_k=self.rag_top_k)
                         duration_ms = (time.perf_counter() - start_time) * 1000
                         logger.success(f"NumPy cosine similarity search completed in {duration_ms:.3f}ms")
+                        self.current_turn_latency["rag"] = duration_ms
                         
                         if retrieved:
                             context_str = "\n".join([f"- From {c['source']}: {c['text']}" for c in retrieved])
@@ -862,14 +896,22 @@ class Glados:
                 logger.debug(f"starting request on {messages_for_llm=}")
                 logger.debug("Performing request to LLM server...")
 
+                # Measure prompt token size (characters)
+                prompt_chars = sum(len(msg.get("content", "")) for msg in messages_for_llm)
+                self.current_turn_latency["prompt_tokens"] = prompt_chars
+
                 # Perform the request and process the stream
                 try:
+                    start_llm = time.perf_counter()
                     with requests.post(
                         self.completion_url,
                         headers=self.prompt_headers,
                         json=data,
                         stream=(self.api_type != "gemini"),  # Don't stream for Gemini
                     ) as response:
+                        llm_latency_ms = (time.perf_counter() - start_llm) * 1000
+                        self.current_turn_latency["llm"] = llm_latency_ms
+
                         if response.status_code != 200:
                             logger.error(f"LLM API returned status code {response.status_code}: {response.text}")
                             self.currently_speaking.clear()
@@ -889,6 +931,11 @@ class Glados:
                                     if parts and len(parts) > 0:
                                         full_text = parts[0].get("text", "")
                                         if full_text:
+                                            # Record response characters
+                                            response_chars = len(full_text)
+                                            self.current_turn_latency["response_tokens"] = response_chars
+                                            self.current_turn_latency["payload_size_kb"] = (prompt_chars + response_chars) / 1024.0
+                                            
                                             if self.on_assistant_chunk:
                                                 try:
                                                     self.on_assistant_chunk(full_text)
@@ -911,6 +958,11 @@ class Glados:
                                     if "choices" in result and len(result["choices"]) > 0:
                                         full_text = result["choices"][0].get("message", {}).get("content", "")
                                         if full_text:
+                                            # Record response characters
+                                            response_chars = len(full_text)
+                                            self.current_turn_latency["response_tokens"] = response_chars
+                                            self.current_turn_latency["payload_size_kb"] = (prompt_chars + response_chars) / 1024.0
+                                            
                                             if self.on_assistant_chunk:
                                                 try:
                                                     self.on_assistant_chunk(full_text)
@@ -921,6 +973,7 @@ class Glados:
                                     logger.error(f"Error processing non-streaming OpenAI response: {e}")
                             else:
                                 # Streaming response - process line by line
+                                accumulated_response = []
                                 for line in response.iter_lines():
                                     if self.processing is False:
                                         break  # If the stop flag is set from new voice input, halt processing
@@ -930,6 +983,7 @@ class Glados:
                                             if cleaned_line:  # Add check for empty cleaned line
                                                 chunk = self._process_chunk(cleaned_line)
                                                 if chunk:
+                                                    accumulated_response.append(chunk)
                                                     if self.on_assistant_chunk:
                                                         try:
                                                             self.on_assistant_chunk(chunk)
@@ -960,6 +1014,12 @@ class Glados:
 
                                 if self.processing and sentence:
                                     self._process_sentence(sentence)
+                                
+                                # Record response characters
+                                full_text = "".join(accumulated_response)
+                                response_chars = len(full_text)
+                                self.current_turn_latency["response_tokens"] = response_chars
+                                self.current_turn_latency["payload_size_kb"] = (prompt_chars + response_chars) / 1024.0
                         self.tts_queue.put("<EOS>")  # Add end of stream token to the queue
                 except Exception as e:
                     logger.error(f"Error communicating with LLM API: {e}")
@@ -1116,15 +1176,23 @@ class Glados:
                 elif not generated_text:
                     logger.warning("Empty string sent to TTS")
                 else:
-                    logger.info(f"LLM text: {generated_text}")
-
                     start = time.time()
                     spoken_text = self._stc.text_to_spoken(generated_text)
                     audio = self._tts.synthesize_audio(spoken_text)
+                    tts_duration_ms = (time.time() - start) * 1000
                     logger.info(
-                        f"TTS Complete, inference: {(time.time() - start):.2f}, "
+                        f"TTS Complete, inference: {tts_duration_ms / 1000:.2f}s, "
                         f"length: {len(audio) / self._tts.sample_rate:.2f}s"
                     )
+
+                    if self.is_first_sentence:
+                        self.current_turn_latency["tts"] = tts_duration_ms
+                        self.is_first_sentence = False
+                        if self.on_latency_profile:
+                            try:
+                                self.on_latency_profile(dict(self.current_turn_latency))
+                            except Exception as e:
+                                logger.error(f"Error in on_latency_profile callback: {e}")
 
                     if len(audio):
                         self.audio_queue.put(AudioMessage(audio, spoken_text))
