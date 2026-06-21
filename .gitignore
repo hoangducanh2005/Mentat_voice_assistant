@@ -166,3 +166,8 @@ cython_debug/
 *.onnx
 
 .venv/
+
+# Generated data files
+data/vectors.npz
+data/knowledge/
+.agents/

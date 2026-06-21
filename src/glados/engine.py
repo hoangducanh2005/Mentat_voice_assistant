@@ -864,10 +864,15 @@ class Glados:
                 # Perform RAG query context injection if enabled
                 messages_for_llm = self.messages
                 if self.rag_enabled and self.rag_store:
-                    logger.debug(f"Querying RagStore for context on query: '{detected_text}'")
+                    search_query = detected_text
+                    # Heuristic: If it's a short follow-up query, append the previous user query for better RAG context
+                    if len(detected_text.split()) <= 6 and len(self.messages) >= 4 and self.messages[-3]["role"] == "user":
+                        search_query = f"{self.messages[-3]['content']} {detected_text}"
+                        
+                    logger.debug(f"Querying RagStore for context on query: '{search_query}'")
                     try:
                         start_time = time.perf_counter()
-                        retrieved = self.rag_store.search(detected_text, top_k=self.rag_top_k)
+                        retrieved = self.rag_store.search(search_query, top_k=self.rag_top_k)
                         duration_ms = (time.perf_counter() - start_time) * 1000
                         logger.success(f"NumPy cosine similarity search completed in {duration_ms:.3f}ms")
                         self.current_turn_latency["rag"] = duration_ms
@@ -886,8 +891,8 @@ class Glados:
                             messages_for_llm = copy.deepcopy(self.messages)
                             if messages_for_llm and messages_for_llm[-1]["role"] == "user":
                                 messages_for_llm[-1]["content"] = (
-                                    f"Context from Mentat Archives:\n{context_str}\n\n"
-                                    f"Query: {detected_text}"
+                                    f"Optional Context from Mentat Archives (Ignore if irrelevant to the ongoing conversation or user query):\n{context_str}\n\n"
+                                    f"User Query: {detected_text}"
                                 )
                     except Exception as e:
                         logger.error(f"Error executing RAG search: {e}")
