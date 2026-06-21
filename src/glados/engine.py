@@ -518,8 +518,7 @@ class Glados:
                 logger.info("Interruption is disabled, and the assistant is currently speaking, ignoring new input.")
                 return
 
-            if self.use_mic_speaker:
-                sd.stop()  # Stop the audio stream to prevent overlap
+            sd.stop()  # Stop the audio stream to prevent overlap
             self.processing = False  # Turns off processing on threads for the LLM and TTS!!!
             self._samples = list(self._buffer.queue)
             self._recording_started = True
