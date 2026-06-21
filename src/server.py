@@ -32,19 +32,15 @@ def on_audio_out(audio: np.ndarray, text: str):
     if not active_websockets or not main_loop:
         return
         
-    if glados:
-        try:
-            sd.play(audio, glados._tts.sample_rate)
-        except Exception as e:
-            logger.error(f"Error playing audio on Pi: {e}")
-
-    # Send ONLY the text to the laptop so the UI still updates
+    audio_bytes = audio.tobytes()
+    # Send text first as json, then audio as binary
     message = json.dumps({"type": "audio_text", "text": text})
     
     async def broadcast():
         for ws in list(active_websockets):
             try:
                 await ws.send_text(message)
+                await ws.send_bytes(audio_bytes)
             except Exception as e:
                 logger.error(f"Error sending to websocket: {e}")
                 
